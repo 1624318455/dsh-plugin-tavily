@@ -30,13 +30,24 @@ export const TAVILY_DEFAULT_TOPIC = 'general'
 /** Default: request Tavily's generated answer and carry it as `content`. */
 export const TAVILY_DEFAULT_INCLUDE_ANSWER = true
 
+/** Credential reference resolved when the section names none. */
+export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
+
 /** Attribution header sent on every request. Bump with the package version. */
 const USER_AGENT = 'dsh-plugin-tavily/0.1.0'
 
-/** Resolved provider options (the plugin's `apply` supplies env-var and constant defaults). */
+/**
+ * Resolved provider options. `apply` supplies env-var and constant defaults; the
+ * credential itself is resolved once per operation through `resolveApiKey` (or
+ * taken literally from `apiKey`), so a settings edit never re-registers the provider.
+ */
 export interface TavilySearchProviderOptions {
-  /** Tavily API key. Empty/absent makes the provider unavailable. */
-  apiKey: string
+  /** Literal Tavily API key; prefer {@link resolveApiKey} so no secret enters configuration files. */
+  apiKey?: string
+  /** Resolve the operation's key; returned when the literal is absent. */
+  resolveApiKey?: () => Promise<string | undefined>
+  /** Credential reference named in diagnostics; defaults to `TAVILY_API_KEY`. */
+  apiKeyEnv?: string
   /** Endpoint base; `/search` is appended. */
   baseURL: string
   /** Search depth sent as Tavily's `search_depth`. */
@@ -96,41 +107,50 @@ export function mapTavilyResponse(response: TavilySearchResponse): WebSearchResu
 export class TavilySearchProvider implements WebSearchProvider {
   readonly id = TAVILY_PROVIDER_ID
 
-  constructor(private readonly options: TavilySearchProviderOptions) {}
+  /**
+   * @param resolveOptions - thunk producing one operation's option snapshot. The
+   *   section is re-read per search, so a settings edit applies live without
+   *   re-registration; the snapshot also keeps the resolved key and the endpoint
+   *   it is sent to from one section.
+   */
+  constructor(private readonly resolveOptions: () => TavilySearchProviderOptions) {}
 
   available(): boolean {
-    return this.options.apiKey.length > 0
-      && isValidBaseUrl(this.options.baseURL)
-      && (this.options.days === undefined || isPositiveInteger(this.options.days))
-      && (this.options.numResults === undefined || isPositiveInteger(this.options.numResults))
+    const options = this.resolveOptions()
+    return ((options.apiKey?.length ?? 0) > 0 || options.resolveApiKey !== undefined)
+      && isValidBaseUrl(options.baseURL)
+      && (options.days === undefined || isPositiveInteger(options.days))
+      && (options.numResults === undefined || isPositiveInteger(options.numResults))
   }
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
+    const options = this.resolveOptions()
+    const apiKey = await this.apiKey(options, signal)
     // A per-request bound wins over the configured default; either may be absent.
-    const maxResults = request.maxResults ?? this.options.numResults
+    const maxResults = request.maxResults ?? options.numResults
     let response: Response
     try {
-      response = await fetch(`${this.options.baseURL}/search`, {
+      response = await fetch(`${options.baseURL}/search`, {
         method: 'POST',
         redirect: 'error',
         headers: {
-          'authorization': `Bearer ${this.options.apiKey}`,
+          'authorization': `Bearer ${apiKey}`,
           'content-type': 'application/json',
           'accept': 'application/json',
           'user-agent': USER_AGENT,
         },
         body: JSON.stringify({
           query: request.query,
-          search_depth: this.options.searchDepth,
-          topic: this.options.topic,
-          include_answer: this.options.includeAnswer,
+          search_depth: options.searchDepth,
+          topic: options.topic,
+          include_answer: options.includeAnswer,
           ...maxResults !== undefined ? { max_results: maxResults } : {},
-          ...this.options.days !== undefined ? { days: this.options.days } : {},
+          ...options.days !== undefined ? { days: options.days } : {},
         }),
         ...signal !== undefined ? { signal } : {},
       })
     } catch (error: unknown) {
-      if (isAbortError(error)) throw new WebError('Tavily search aborted', 'WEB_ABORTED', { cause: error })
+      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
       throw new WebError(`Tavily search request failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
     }
 
@@ -145,7 +165,7 @@ export class TavilySearchProvider implements WebSearchProvider {
         // An abort fired mid-body must surface as WEB_ABORTED, not be swallowed
         // into a generic HTTP-error message — cancellation is not a provider
         // error (the seam's cancellation contract).
-        if (isAbortError(error)) throw new WebError('Tavily search aborted', 'WEB_ABORTED', { cause: error })
+        if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
         // Otherwise: the HTTP status is already captured in `message` above; a
         // malformed/non-JSON error body (normal for gateway 5xx/429s) can only
         // cost a richer provider message, never the real error.
@@ -157,9 +177,40 @@ export class TavilySearchProvider implements WebSearchProvider {
       const payload = await response.json() as TavilySearchResponse
       return mapTavilyResponse(payload)
     } catch (error: unknown) {
-      if (isAbortError(error)) throw new WebError('Tavily search aborted', 'WEB_ABORTED', { cause: error })
+      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      if (error instanceof WebError) throw error
       throw new WebError(`Tavily returned an unprocessable response body: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
     }
+  }
+
+  /**
+   * Resolve one operation's credential without retaining it on the provider.
+   * @param options - the caller's snapshot, so the key and the endpoint it is sent to come from one section.
+   * @param signal - abort signal for the surrounding search.
+   * @returns the resolved key.
+   */
+  private async apiKey(options: TavilySearchProviderOptions, signal?: AbortSignal): Promise<string> {
+    throwIfSearchAborted(signal)
+    if (options.apiKey !== undefined && options.apiKey.length > 0) return options.apiKey
+    let resolved: string | undefined
+    try {
+      resolved = await abortable(options.resolveApiKey?.() ?? Promise.resolve(undefined), signal)
+    } catch (error: unknown) {
+      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      throw new WebError(
+        `Tavily search credential resolution failed: ${String(error)}`,
+        'WEB_PROVIDER_ERROR',
+        { cause: error },
+      )
+    }
+    if (resolved !== undefined && resolved.length > 0) return resolved
+    const ref = options.apiKeyEnv ?? TAVILY_DEFAULT_API_KEY_ENV
+    throw new WebError(
+      `Tavily search has no API key for "${ref}"; store it through the credentials service`
+      + ' (the web Plugins page writes it), export it in the launching environment, or set a literal'
+      + ' "apiKey" in the web-search-tavily config',
+      'WEB_PROVIDER_CREDENTIAL_MISSING',
+    )
   }
 }
 
@@ -176,4 +227,40 @@ function isPositiveInteger(value: number): boolean {
 /** True for a fetch/`AbortSignal` abort, surfaced as `WEB_ABORTED`. */
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+/**
+ * Race a same-process asynchronous preflight against caller cancellation. The
+ * attached settlement handlers keep observing an uncooperative operation after
+ * abort so a later rejection cannot become unhandled.
+ */
+function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return operation
+  if (signal.aborted) return Promise.reject(searchAborted(signal))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => { reject(searchAborted(signal)) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(new Error(String(error).replace(/^Error: /u, ''), { cause: error }))
+      },
+    )
+  })
+}
+
+/** Throw the provider's stable cancellation error when the caller already aborted. */
+function throwIfSearchAborted(signal?: AbortSignal): void {
+  if (signal?.aborted === true) throw searchAborted(signal)
+}
+
+/** Build the provider's stable cancellation error while retaining the caller's reason. */
+function searchAborted(signal?: AbortSignal, fallback?: unknown): WebError {
+  return new WebError('Tavily search aborted', 'WEB_ABORTED', {
+    cause: signal?.aborted === true ? signal.reason : fallback,
+  })
 }

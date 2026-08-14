@@ -1,10 +1,11 @@
 /**
  * Real-API smoke test for the built dsh-plugin-tavily. Exercises the plugin's real code
- * path end to end — `apply()` registers the provider into `ctx.web`, then a live
- * `search()` hits api.tavily.com and maps the response — without constructing the full
- * harness runtime (whose peer closure has cross-package version skew). The full
- * harness registration path is covered by installing the plugin into a real `dsh`
- * profile (`dsh plugin --profile web add ...`).
+ * path end to end — `apply()` registers the provider into `ctx.web` and the settings
+ * section into the settings seam (when present), then a live `search()` hits
+ * api.tavily.com and maps the response — without constructing the full harness runtime
+ * (whose peer closure has cross-package version skew). The full harness registration
+ * path is covered by installing the plugin into a real `dsh` profile
+ * (`dsh plugin --profile web add ...`).
  *
  * Usage:
  *   node tests/smoke.mjs          # needs TAVILY_API_KEY exported (or source ../.env)
@@ -17,7 +18,8 @@ if (apiKey === undefined || apiKey.length === 0) {
   process.exit(1)
 }
 
-// Minimal stand-in for the harness's ctx.web: apply() only needs registerSearchProvider.
+// Minimal stand-in for the harness's ctx.web: apply() only needs registerSearchProvider
+// (plus the optional-settings seam hooks, which no-op when the service never mounts).
 const registered = []
 const ctx = {
   web: {
@@ -26,6 +28,8 @@ const ctx = {
       return () => {}
     },
   },
+  inject: () => () => {},
+  get: () => undefined,
 }
 
 plugin.apply(ctx, { apiKey })

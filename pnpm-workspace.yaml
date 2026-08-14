@@ -1,9 +1,9 @@
 allowBuilds:
-  '@deepseek-ai/dsh-subprocess-local': set this to true or false
-  '@google/genai': set this to true or false
-  koffi: set this to true or false
-  node-pty: set this to true or false
-  protobufjs: set this to true or false
+  '@deepseek-ai/dsh-subprocess-local': false
+  '@google/genai': false
+  koffi: false
+  node-pty: false
+  protobufjs: false
 autoInstallPeers: true
 minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.1'
@@ -102,6 +102,12 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-bash-local@0.1.0-rc.6'
   - '@deepseek-ai/dsh-brand@0.1.0-rc.6'
   - '@deepseek-ai/dsh-client-connection@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-locale@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-runtime@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-ui-primitives@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-ui-settings@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-ui-settings-plugins@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-ui-slots@0.1.0-rc.6'
   - '@deepseek-ai/dsh-code-runtime@0.1.0-rc.6'
   - '@deepseek-ai/dsh-compaction@0.1.0-rc.6'
   - '@deepseek-ai/dsh-cordis-host-runner@0.1.0-rc.6'
@@ -136,3 +142,5 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-timeout@0.1.0-rc.6'
   - '@deepseek-ai/dsh-workflow@0.1.0-rc.6'
   - '@deepseek-ai/dsh-workspace@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-schema-form@0.1.0-rc.6'
+  - '@deepseek-ai/dsh-client-web-react@0.1.0-rc.6'

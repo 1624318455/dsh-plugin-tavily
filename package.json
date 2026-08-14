@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-plugin-tavily",
-  "description": "Tavily-backed web search provider for DeepSeek Harness — registers a search provider into the ctx.web seam",
+  "description": "Tavily-backed web search provider for DeepSeek Harness — registers a search provider into the ctx.web seam and ships a settings card in the web GUI (设置 → 插件 → 网页搜索)",
   "version": "0.1.0",
   "type": "module",
   "main": "lib/index.mjs",
@@ -8,31 +8,68 @@
     ".": {
       "default": "./lib/index.mjs"
     },
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
     }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-web": "^0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-api-remotes": "^0.1.0-rc.6",
+    "react": "^18.2.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-base": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-web": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-api-remotes": "^0.1.0-rc.6",
     "@types/node": "^22.0.0",
+    "@types/react": "^18.2.0",
+    "react": "^18.2.0",
     "tsdown": "^0.22.2",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.0"
   },
   "scripts": {
     "build": "tsdown --config ./tsdown.config.ts",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/smoke.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "license": "MIT"
 }
