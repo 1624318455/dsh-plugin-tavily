@@ -1,0 +1,38 @@
+{
+  "name": "@dsh-external/dsh-plugin-tavily",
+  "description": "Tavily-backed web search provider for DeepSeek Harness — registers a search provider into the ctx.web seam",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "lib/index.mjs",
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-web": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-base": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-web": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/node": "^22.0.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "tsdown --config ./tsdown.config.ts",
+    "test": "node tests/smoke.mjs"
+  },
+  "license": "MIT"
+}
