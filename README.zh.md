@@ -47,6 +47,15 @@ dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
 
 3. **重启 dsh**，照常使用 `web_search`。面向模型的工具不变，只有背后的搜索后端换成 Tavily。
 
+### 验证后端确实是 Tavily
+
+`web_search` 工具的输出 schema 与提供方无关 —— 模型看不到提供方名称，且 API key 刻意存放在环境变量之外，所以"查环境变量"是错误探测方式。要确认当前后端：
+
+- **提供方选择** —— `~/.dsh/profiles/web/cordis.patch.yml` 中有 `web` 行且 `searchProvider: tavily`。
+- **插件已加载** —— `~/.dsh/settings.yaml` 含 `web-search-tavily` 配置节（只有插件的 `installSettingsSection` 会写入它）。
+- **凭据在位** —— `TAVILY_API_KEY` 存在于凭据存储（`~/.dsh/.credentials.yaml`），不在环境变量中。
+- **结果特征** —— Tavily 结果在 `content` 中携带生成式 answer 摘要；内置 DeepSeek provider 不产生该字段。
+
 ## 插件配置
 
 GUI 卡片只编辑你最常改的三个值：**API Key**、**默认结果数量**（`numResults`）和**时效窗口**（`days`）。其余配置键一律写在 profile 配置里，卡片上不渲染：

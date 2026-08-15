@@ -47,6 +47,15 @@ The plugin registers the provider and its card only — it does **not** override
 
 3. **Restart dsh** and use `web_search` as usual. The model-facing tool is unchanged; only the backend answering it is now Tavily.
 
+### Verify the backend is really Tavily
+
+The `web_search` tool's output schema is provider-agnostic — the model never sees a provider name, and the API key intentionally lives outside environment variables, so "check the env" is the wrong probe. To confirm the active backend:
+
+- **Provider selection** — `~/.dsh/profiles/web/cordis.patch.yml` has the `web` row with `searchProvider: tavily`.
+- **Plugin loaded** — `~/.dsh/settings.yaml` contains a `web-search-tavily` section (only the plugin's `installSettingsSection` writes it).
+- **Credential in place** — `TAVILY_API_KEY` exists in the credentials store (`~/.dsh/.credentials.yaml`), not in the environment.
+- **Result fingerprint** — a Tavily result carries a generated-answer summary in `content`; the built-in DeepSeek provider does not produce one.
+
 ## Plugin config
 
 The GUI card edits the three values you change most often — the **API key**, the **default result count** (`numResults`), and the **recency window** (`days`). Every other key is set from the profile configuration and is *not* rendered on the card:
