@@ -73,8 +73,9 @@ export default defineConfig([
     },
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_ID)}, factory: (require) => {`,
-      footer: 'return module.exports; } });',
+      banner: `if (typeof window !== 'undefined') {
+window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_ID)}, factory: (require) => {`,
+      footer: 'return module.exports; } });\n} else {\nmodule.exports = {};\n}',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },
   },
