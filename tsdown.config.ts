@@ -72,7 +72,7 @@ export default defineConfig([
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
     },
     outputOptions: {
-      entryFileNames: 'client.js',
+      entryFileNames: 'client.cjs',
       banner: `if (typeof window !== 'undefined') {
 window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_ID)}, factory: (require) => {`,
       footer: 'return module.exports; } });\n} else {\nmodule.exports = {};\n}',

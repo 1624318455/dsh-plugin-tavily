@@ -8,7 +8,7 @@
     ".": {
       "default": "./lib/index.mjs"
     },
-    "./client": "./lib/client.js",
+    "./client": "./lib/client.cjs",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
