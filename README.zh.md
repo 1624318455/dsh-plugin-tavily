@@ -9,9 +9,10 @@
 ## 功能
 
 - **即插即用的搜索后端**：选中 `tavily` 后，内置 `web_search` 工具（以及 agent 自身的搜索）都由 Tavily 应答——面向模型的接口不变。
-- **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`days` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
+- **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`searchMode`、`days` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
 - **配置文件优先**：`cordis.patch.yml` > WebUI > 代码默认值。yaml 显式设置的字段在卡片上置灰并显示「该参数已被配置文件覆盖」，WebUI 无法覆盖。
-- **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息。
+- **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
+- **搜索模式**：可在高级面板选择 `tavily-only`（直接走 Tavily，跳过 DeepSeek）或 `deepseek-first`（先 DeepSeek 后 Tavily，综合结果）。
 - **凭据优先的密钥解析**：每次搜索按 字面量 `apiKey` → 凭据服务（`apiKeyEnv`）→ `process.env[apiKeyEnv]` 的顺序解析。
 
 ## 安装
@@ -64,8 +65,9 @@ dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
 - **基础设置（默认展开）**：
   - **API Key** —— 粘贴你的 Tavily 密钥。密钥经凭据服务写入，绝不进入设置文件。
   - **API Base URL** —— 留空使用 `https://api.tavily.com`；可填代理/自定义接口地址。
-  - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。
-- **高级搜索参数（`🔧 高级 Tavily 请求参数（进阶用户）`，默认收起）**：
+  - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
+- **高级搜索参数（`🔧 高级 Tavily 请求参数`，默认收起）**：
+  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`：先走 DeepSeek，再合并 Tavily 结果。两种模式都需要在 web 配置中选择 `searchProvider: tavily`。
   - **最大结果数** —— 单次搜索返回网页结果数量（1–20，默认 5）。
   - **搜索深度** —— `basic`（快速省 token）或 `advanced`（深度检索，更耗 token）。
   - **搜索主题** —— `general`、`news` 或 `finance`。
@@ -91,6 +93,7 @@ dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
     maxResults: 8
     includeRawContent: false
     timeout: 20000
+    searchMode: deepseek-first
 ```
 
 ### 优先级
@@ -116,6 +119,7 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `includeAnswer` | `true` | 请求 Tavily 生成式答案 | ✓ |
 | `includeRawContent` | `false` | 返回网页原始内容（耗上下文） | ✓ |
 | `timeout` | `30000` | 请求超时（毫秒） | ✓ |
+| `searchMode` | `tavily-only` | `tavily-only`（直接 Tavily）或 `deepseek-first`（DeepSeek + Tavily 综合） | ✓ |
 | `days` | （未设） | 时效窗口（天），用于 news/finance | ✓ |
 | `numResults` | `5` | **已废弃**：`maxResults` 的旧别名 | 否（请用 `maxResults`） |
 

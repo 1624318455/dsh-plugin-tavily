@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-plugin-tavily",
   "description": "Professional Tavily-backed web search provider for DeepSeek Harness — full request parameters in a WebUI settings card, yaml-first priority, and API connectivity test",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "main": "lib/index.mjs",
   "exports": {

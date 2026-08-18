@@ -43,7 +43,7 @@ export const TAVILY_DEFAULT_MAX_RESULTS = 5
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.2.0'
+const USER_AGENT = 'dsh-plugin-tavily/0.3.0'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the
@@ -76,6 +76,13 @@ export interface TavilySearchProviderOptions {
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
 }
+
+/**
+ * Optional secondary search consulted before Tavily (the DeepSeek provider).
+ * Returning `undefined` means the secondary provider is absent/unavailable and
+ * the Tavily result stands alone.
+ */
+export type HybridSearch = (request: WebSearchRequest, signal?: AbortSignal) => Promise<WebSearchResult | undefined>
 
 /**
  * Map one Tavily result to a normalized source, or `undefined` when it carries no
@@ -127,8 +134,14 @@ export class TavilySearchProvider implements WebSearchProvider {
    *   section is re-read per search, so a settings edit applies live without
    *   re-registration; the snapshot also keeps the resolved key and the endpoint
    *   it is sent to from one section.
+   * @param hybridSearch - thunk returning the secondary (DeepSeek) search when
+   *   the current search mode calls for it. Re-evaluated per op so a settings
+   *   edit can switch between Tavily-only and DeepSeek-first live.
    */
-  constructor(private readonly resolveOptions: () => TavilySearchProviderOptions) {}
+  constructor(
+    private readonly resolveOptions: () => TavilySearchProviderOptions,
+    private readonly hybridSearch?: () => HybridSearch | undefined,
+  ) {}
 
   available(): boolean {
     const options = this.resolveOptions()
@@ -142,7 +155,37 @@ export class TavilySearchProvider implements WebSearchProvider {
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     const options = this.resolveOptions()
+    // DeepSeek-first mode runs the secondary provider before Tavily and merges
+    // the results. A failing/absent secondary provider never blocks Tavily.
+    const secondary = this.hybridSearch?.()
+    const secondaryResult = secondary === undefined
+      ? undefined
+      : await this.runSecondarySearch(secondary, request, signal)
     const apiKey = await this.apiKey(options, signal)
+    const tavilyResult = await this.tavilySearch(request, signal, options, apiKey)
+    return mergeSearchResults(secondaryResult, tavilyResult)
+  }
+
+  /** Best-effort secondary search: absence or failure degrades to Tavily only. */
+  private async runSecondarySearch(
+    search: HybridSearch,
+    request: WebSearchRequest,
+    signal?: AbortSignal,
+  ): Promise<WebSearchResult | undefined> {
+    try {
+      return await search(request, signal)
+    } catch (_secondarySearchFailure) {
+      return undefined
+    }
+  }
+
+  /** Run the Tavily request itself with an already-resolved API key. */
+  private async tavilySearch(
+    request: WebSearchRequest,
+    signal: AbortSignal | undefined,
+    options: TavilySearchProviderOptions,
+    apiKey: string,
+  ): Promise<WebSearchResult> {
     // A per-request bound wins over the configured default; either may be absent.
     const maxResults = request.maxResults ?? options.maxResults ?? options.numResults
     const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
@@ -236,6 +279,32 @@ export class TavilySearchProvider implements WebSearchProvider {
 /** True when `baseURL` parses as an absolute URL (a cheap local config check). */
 function isValidBaseUrl(baseURL: string): boolean {
   return URL.canParse(baseURL)
+}
+
+/**
+ * Merge an optional secondary (DeepSeek) result with the Tavily result.
+ * Sources are de-duplicated by URL with the secondary first. The `content` field
+ * joins both providers' answers when present.
+ */
+function mergeSearchResults(
+  secondary: WebSearchResult | undefined,
+  tavily: WebSearchResult,
+): WebSearchResult {
+  if (secondary === undefined) return tavily
+  const seen = new Set<string>()
+  const sources = [...secondary.sources, ...tavily.sources].filter(source => {
+    if (seen.has(source.url)) return false
+    seen.add(source.url)
+    return true
+  })
+  const content = [secondary.content, tavily.content]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .join('\n\n')
+  return {
+    ...content.length > 0 ? { content } : {},
+    sources,
+    truncated: secondary.truncated || tavily.truncated,
+  }
 }
 
 /** True for a request limit that can be sent to Tavily (a positive whole number). */

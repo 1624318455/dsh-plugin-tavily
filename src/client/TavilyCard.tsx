@@ -87,7 +87,9 @@ export function TavilyCard(props: TavilyCardProps) {
             <p className="dsh-tavily-test-error" role="alert">
               {state.apiTest.detail === 'need-key'
                 ? t('testApiNeedKey')
-                : `${t('testApiFailed')} ${state.apiTest.detail}`}
+                : state.apiTest.detail === 'need-key-configured'
+                  ? t('testApiKeyConfiguredNeedReentry')
+                  : `${t('testApiFailed')} ${state.apiTest.detail}`}
             </p>
           )
           : null}
@@ -147,6 +149,24 @@ export function TavilyCard(props: TavilyCardProps) {
           ]}
           onEdit={(text) => { props.edit('topic', text) }}
           onReset={() => { props.resetField('topic') }}
+        />
+        <SelectField
+          id="plugin-config-tavily-search-mode"
+          label={t('tavilySearchMode')}
+          hint={t('tavilySearchModeHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder="tavily-only"
+          disabled={disabled}
+          {...state.searchMode}
+          options={[
+            { value: 'tavily-only', label: t('searchModeTavilyOnly') },
+            { value: 'deepseek-first', label: t('searchModeDeepseekFirst') },
+          ]}
+          onEdit={(text) => { props.edit('searchMode', text) }}
+          onReset={() => { props.resetField('searchMode') }}
         />
         <CheckField
           id="plugin-config-tavily-include-answer"

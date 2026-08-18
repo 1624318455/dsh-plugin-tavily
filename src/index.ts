@@ -19,7 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import type {} from '@deepseek-ai/dsh-web'
+import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '@deepseek-ai/dsh-web'
 import {
   TavilySearchProvider,
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -30,8 +30,9 @@ import {
   TAVILY_DEFAULT_SEARCH_DEPTH,
   TAVILY_DEFAULT_TIMEOUT,
   TAVILY_DEFAULT_TOPIC,
+  TAVILY_PROVIDER_ID,
 } from './provider'
-import type { TavilySearchProviderOptions } from './provider'
+import type { HybridSearch, TavilySearchProviderOptions } from './provider'
 
 export {
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -86,6 +87,14 @@ export interface Config {
   maxResults?: number
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
+  /**
+   * Search composition mode.
+   * - `tavily-only`: the Tavily provider answers directly and does not consult DeepSeek.
+   * - `deepseek-first`: the Tavily provider first runs the registered DeepSeek
+   *   search provider (when available) and merges its results with Tavily's.
+   * Defaults to `tavily-only`.
+   */
+  searchMode?: 'tavily-only' | 'deepseek-first'
 }
 
 export const Config: z<Config> = z.object({
@@ -100,6 +109,7 @@ export const Config: z<Config> = z.object({
   timeout: z.number().step(100).min(1000).description('Request timeout in milliseconds.'),
   maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
+  searchMode: z.union(['tavily-only', 'deepseek-first'] as const).description('Search composition: Tavily-only or DeepSeek-first with Tavily merge.'),
 })
 
 /** Settings namespace carrying this provider's endpoint, depth, topic, and key reference. */
@@ -148,6 +158,28 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
   }
 }
 
+/**
+ * Build the optional secondary search used by `deepseek-first` mode.
+ *
+ * The web seam deliberately exposes no provider lookup API, so this reads the
+ * registry through the runtime's internal map. It looks for a provider whose id
+ * contains `deepseek` and is available; if none exists the mode degrades to a
+ * Tavily-only search (the provider's own catch hides any absence/failure).
+ */
+function hybridDeepSeekSearch(ctx: Context): HybridSearch {
+  return async (request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult | undefined> => {
+    const web = ctx.web as unknown as { searchProviders?: Map<string, WebSearchProvider> }
+    const providers = web.searchProviders
+    if (providers === undefined) return undefined
+    const direct = providers.get('deepseek')
+    const secondary = direct ?? [...providers.values()].find(provider => (
+      provider.id !== TAVILY_PROVIDER_ID && provider.id.includes('deepseek') && provider.available()
+    ))
+    if (secondary === undefined || !secondary.available()) return undefined
+    return secondary.search(request, signal)
+  }
+}
+
 /** Register the Tavily search provider with `ctx.web`. */
 export function apply(ctx: Context, config: Config): void {
   const entry = config
@@ -160,7 +192,13 @@ export function apply(ctx: Context, config: Config): void {
     // section per search, so a committed change needs no re-registration.
     onChange: () => {},
   })
-  ctx.web.registerSearchProvider(new TavilySearchProvider(() => resolveOptions(ctx, current(), entry)))
+  ctx.web.registerSearchProvider(
+    new TavilySearchProvider(
+      () => resolveOptions(ctx, current(), entry),
+      // Re-evaluate per search so a UI/config switch takes effect live.
+      () => current().searchMode === 'deepseek-first' ? hybridDeepSeekSearch(ctx) : undefined,
+    ),
+  )
 }
 
 /** Copy only explicitly defined entry fields, so validation-added keys never count as yaml overrides. */

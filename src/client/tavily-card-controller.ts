@@ -65,6 +65,8 @@ export interface TavilySettings {
   timeout?: number
   /** Default result count when a request carries no `maxResults`. */
   maxResults?: number
+  /** Search composition mode used by the Tavily provider. */
+  searchMode?: 'tavily-only' | 'deepseek-first'
 }
 
 /** Result of the card's browser-side API connectivity test. */
@@ -102,6 +104,8 @@ export interface TavilyCardState extends CardShell {
   includeRawContent: CardFieldState
   /** Request timeout in milliseconds. */
   timeout: CardFieldState
+  /** Search composition mode. */
+  searchMode: CardFieldState
   /** The staged credential, which starts blank on every load. */
   apiKey: CardFieldState
   /** Whether the Host reports a credential configured for the referenced key. */
@@ -148,6 +152,7 @@ export class TavilyCardController {
         booleanField('includeAnswer', true),
         booleanField('includeRawContent', false),
         numberField('timeout', { min: 1000, integer: true }),
+        selectField('searchMode', ['tavily-only', 'deepseek-first']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
@@ -167,6 +172,7 @@ export class TavilyCardController {
       includeAnswer: this.form.field('includeAnswer'),
       includeRawContent: this.form.field('includeRawContent'),
       timeout: this.form.field('timeout'),
+      searchMode: this.form.field('searchMode'),
       apiKey: this.form.field(API_KEY_FIELD),
       apiKeyConfigured: this.credential.configured,
       apiKeyWritable: this.credential.writable,
@@ -245,7 +251,12 @@ export class TavilyCardController {
   private async runApiTest(): Promise<void> {
     const key = this.form.field(API_KEY_FIELD).text.trim()
     if (key === '') {
-      this.apiTest = { status: 'error', detail: 'need-key' }
+      if (this.credential.configured) {
+        this.apiTest = { status: 'error', detail: 'need-key-configured' }
+        document.getElementById('plugin-config-tavily-key')?.focus()
+      } else {
+        this.apiTest = { status: 'error', detail: 'need-key' }
+      }
       this.store.set(this.projection())
       return
     }

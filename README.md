@@ -9,9 +9,10 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 ## Features
 
 - **Drop-in search backend**: select `tavily` and the built-in `web_search` tool (plus the agent's own search) is answered by Tavily — no model-facing changes.
-- **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth`, `topic`, `includeAnswer`, `includeRawContent`, `timeout`, and `days` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
+- **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth`, `topic`, `includeAnswer`, `includeRawContent`, `timeout`, `searchMode`, and `days` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
 - **Configuration-first priority**: `cordis.patch.yml` > WebUI > code defaults. Any field explicitly set in the yaml is shown disabled on the card with a "covered by config file" badge, so a stale UI value can never shadow a developer's pinned config.
-- **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error.
+- **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
+- **Search mode**: choose `tavily-only` (direct Tavily, skip DeepSeek) or `deepseek-first` (run DeepSeek first, then merge Tavily results) from the advanced panel.
 - **Credential-first key handling**: per-search resolution order is literal `apiKey` → credentials service (`apiKeyEnv`) → `process.env[apiKeyEnv]`.
 
 ## Install
@@ -64,8 +65,9 @@ Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)**
 - **Basic area (always visible)**:
   - **API key** — paste your Tavily key. It is stored through the credentials service, never in a settings file.
   - **API Base URL** — leave blank for `https://api.tavily.com`, or set a proxy/endpoint base.
-  - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit.
+  - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
 - **Advanced area (`🔧 Advanced Tavily request parameters`)**:
+  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first`: run DeepSeek search first, then merge its results with Tavily. Both modes require the web config to select `searchProvider: tavily`.
   - **Max results** — how many web results per search (1–20, default 5).
   - **Search depth** — `basic` (fast/cheap) or `advanced` (deeper, more tokens).
   - **Topic** — `general`, `news`, or `finance`.
@@ -91,6 +93,7 @@ Configuration lives in your profile's `cordis.patch.yml` (`~/.dsh/profiles/web/c
     maxResults: 8
     includeRawContent: false
     timeout: 20000
+    searchMode: deepseek-first
 ```
 
 ### Priority
@@ -116,6 +119,7 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `includeAnswer` | `true` | request Tavily's generated answer | ✓ |
 | `includeRawContent` | `false` | raw page content in results (context-heavy) | ✓ |
 | `timeout` | `30000` | request timeout in milliseconds | ✓ |
+| `searchMode` | `tavily-only` | `tavily-only` (direct Tavily) or `deepseek-first` (DeepSeek + Tavily combined) | ✓ |
 | `days` | unset | recency window in days (news/finance topics) | ✓ |
 | `numResults` | `5` | **deprecated alias** for `maxResults` | no (use `maxResults`) |
 

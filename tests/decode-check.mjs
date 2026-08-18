@@ -19,6 +19,7 @@ const Config = z.object({
   timeout: z.number().step(100).min(1000),
   maxResults: z.number().step(1).min(1).max(20),
   numResults: z.number().step(1).min(1).max(20),
+  searchMode: z.union(['tavily-only', 'deepseek-first']),
 })
 
 function rehydrateSchema(serialized) {
@@ -62,15 +63,16 @@ const cases = [
     apiKeyEnv: 'TAVILY_API_KEY', baseURL: 'https://api.tavily.com',
     searchDepth: 'basic', topic: 'general', days: 7,
     includeAnswer: true, includeRawContent: false,
-    timeout: 30000, maxResults: 5,
+    timeout: 30000, maxResults: 5, searchMode: 'tavily-only',
   }],
   ['user overrides', {
     apiKeyEnv: 'MY_KEY', baseURL: 'https://x', searchDepth: 'advanced',
     topic: 'news', days: 3, includeAnswer: false, includeRawContent: true,
-    timeout: 15000, maxResults: 10,
+    timeout: 15000, maxResults: 10, searchMode: 'deepseek-first',
   }],
   ['string where number', { days: '7' }],
   ['maxResults out of range', { maxResults: 21 }],
+  ['invalid searchMode', { searchMode: 'hybrid' }],
 ]
 for (const [label, value] of cases) {
   const failure = validateDraft(rehydrated, value)

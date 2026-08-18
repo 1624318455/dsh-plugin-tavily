@@ -16,10 +16,12 @@ export type TavilyCardLocaleKey =
   | 'tavilyIncludeRawContent' | 'tavilyIncludeRawContentHint'
   | 'tavilyTimeout' | 'tavilyTimeoutHint'
   | 'tavilyDays' | 'tavilyDaysHint'
+  | 'tavilySearchMode' | 'tavilySearchModeHint'
+  | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst'
   | 'advancedTitle'
   | 'searchDepthBasic' | 'searchDepthAdvanced'
   | 'topicGeneral' | 'topicNews' | 'topicFinance'
-  | 'testApi' | 'testingApi' | 'testApiHint' | 'testApiNeedKey' | 'testApiSuccess' | 'testApiFailed'
+  | 'testApi' | 'testingApi' | 'testApiHint' | 'testApiNeedKey' | 'testApiKeyConfiguredNeedReentry' | 'testApiSuccess' | 'testApiFailed'
   | 'overridden' | 'configCovered' | 'reset' | 'readOnly' | 'expand' | 'collapse'
   | 'save' | 'saving' | 'discard' | 'unsaved' | 'saveFailed' | 'invalidNumber'
 
@@ -54,7 +56,11 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyTimeoutHint: 'Milliseconds before a search request is abandoned; blank uses 30000.',
   tavilyDays: 'Recency window (days)',
   tavilyDaysHint: 'Only results from the last N days; leave blank to disable.',
-  advancedTitle: '🔧 Advanced Tavily request parameters (advanced users)',
+  tavilySearchMode: 'Search mode',
+  tavilySearchModeHint: 'tavily-only: direct Tavily (DeepSeek is not consulted). deepseek-first: run DeepSeek first, merge its results with Tavily; requires the web config to select searchProvider: tavily.',
+  searchModeTavilyOnly: 'Tavily only (skip DeepSeek)',
+  searchModeDeepseekFirst: 'DeepSeek first, then Tavily (combined)',
+  advancedTitle: '🔧 Advanced Tavily request parameters',
   searchDepthBasic: 'basic (fast)',
   searchDepthAdvanced: 'advanced (deep)',
   topicGeneral: 'general',
@@ -63,7 +69,8 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   testApi: 'Test API connection',
   testingApi: 'Testing…',
   testApiHint: 'Testing consumes one Tavily search credit.',
-  testApiNeedKey: 'Enter an API key in the field above to test; a stored key cannot be read from the browser.',
+  testApiNeedKey: 'Enter an API key in the field above to test.',
+  testApiKeyConfiguredNeedReentry: 'A key is configured, but browsers cannot read stored secrets. Re-enter the key above once to test it (it will not be saved again).',
   testApiSuccess: 'Connection successful — Tavily accepted the request.',
   testApiFailed: 'Connection failed:',
   overridden: 'Overridden',
@@ -104,7 +111,11 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyTimeoutHint: '搜索请求超时毫秒数；留空使用 30000。',
   tavilyDays: '时间窗口（天）',
   tavilyDaysHint: '只返回最近 N 天的结果；留空表示不限制。',
-  advancedTitle: '🔧 高级 Tavily 请求参数（进阶用户）',
+  tavilySearchMode: '搜索模式',
+  tavilySearchModeHint: 'tavily-only：直接走 Tavily，不查询 DeepSeek；deepseek-first：先走 DeepSeek，再合并 Tavily 结果。两种模式都需在 web 配置中选择 searchProvider: tavily。',
+  searchModeTavilyOnly: '直接使用 Tavily（跳过 DeepSeek）',
+  searchModeDeepseekFirst: '先 DeepSeek，再 Tavily（综合结果）',
+  advancedTitle: '🔧 高级 Tavily 请求参数',
   searchDepthBasic: 'basic（快速）',
   searchDepthAdvanced: 'advanced（深度）',
   topicGeneral: 'general',
@@ -113,7 +124,8 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   testApi: '测试API连接',
   testingApi: '测试中…',
   testApiHint: '测试会消耗一次Tavily搜索额度。',
-  testApiNeedKey: '请在上方输入 API Key 后再测试；已保存的密钥无法从浏览器读取。',
+  testApiNeedKey: '请在上方输入 API Key 后再测试。',
+  testApiKeyConfiguredNeedReentry: '已检测到配置了密钥，但浏览器出于安全设计无法读取已保存的密钥；请在上方重新输入一次密钥来完成测试（不会重复保存）。',
   testApiSuccess: '连接成功 —— Tavily 已接受请求。',
   testApiFailed: '连接失败：',
   overridden: '已覆盖',
