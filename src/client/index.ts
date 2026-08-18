@@ -11,15 +11,17 @@
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: the settings shell's SlotMap merge (the 'settings.plugin.item'
-// entry) and the ctx.settingsScope Context merge. Cross-plugin collaboration
-// goes through the service, never a value import (client bundle purity gate).
+// Type-only: the settings shell's ctx.settingsScope Context merge. Cross-plugin
+// collaboration goes through the service, never a value import (client bundle
+// purity gate). The keyed-slot contract is pinned in ./slot-contract.ts because
+// the published rc.6 settings-plugins types still describe the old list shape.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: the ctx.remote Context merge and the forwarded-event key face.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import './slot-contract.ts'
 import { TavilyCard } from './TavilyCard.tsx'
+
 import { TAVILY_NS, TavilyCardController } from './tavily-card-controller.ts'
 import { en, zh } from './locales.ts'
 import { injectCardStyles } from './styles.ts'
@@ -49,13 +51,21 @@ export function apply(ctx: ClientContext): void {
     'web-search-tavily: credential invalidations',
   )
 
-  // Cards are list entries: the shell stacks them by `order`; this one sits
-  // after the built-in web-search card (20), alongside the settings surface.
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register({
-    name: 'settings.plugin.item',
-    id: 'web-search-tavily',
-    order: 21,
-    locale: NS,
-    inject: () => controller.inject(),
-  }, TavilyCard))
+  // Cards are keyed by the settings namespace the card owns. DSH rc.6+ slots
+  // are keyed: every registration needs a unique string key.
+  ctx.effect(
+    () =>
+      ctx.slots.inject('settings.plugin.item', function* () {
+        yield ctx.slots.register(
+          {
+            name: 'settings.plugin.item',
+            key: 'web-search-tavily',
+            locale: NS,
+            inject: () => controller.inject(),
+          },
+          TavilyCard,
+        )
+      }),
+    'web-search-tavily: settings card',
+  )
 }

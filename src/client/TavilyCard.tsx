@@ -8,9 +8,9 @@
  */
 
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-// Type-only: the settings shell's SlotMap merge (the 'settings.plugin.item'
-// entry) — the card registers into a slot the shell declares.
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+// The keyed-slot contract for 'settings.plugin.item' is pinned in
+// ./slot-contract.ts — the card registers into a slot the shell declares.
+import './slot-contract.ts'
 import { SecretField, ValueField } from './fields.tsx'
 import { PluginCard } from './PluginCard.tsx'
 import type { TavilyCardFace } from './tavily-card-controller.ts'
