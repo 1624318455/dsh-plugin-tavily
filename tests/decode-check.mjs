@@ -4,23 +4,21 @@ import Schema from '@deepseek-ai/schemastery'
 import z from '@deepseek-ai/schemastery'
 
 // --- plugin/src/index.ts Config, mirrored verbatim ---
-const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
-const TAVILY_DEFAULT_BASE_URL = 'https://api.tavily.com'
-const TAVILY_DEFAULT_SEARCH_DEPTH = 'basic'
-const TAVILY_DEFAULT_TOPIC = 'general'
-const TAVILY_DEFAULT_DAYS = 7
-const TAVILY_DEFAULT_INCLUDE_ANSWER = true
-const TAVILY_DEFAULT_NUM_RESULTS = 5
-
+// The schema intentionally has NO defaults: code-level defaults live in the
+// provider resolution step, so the settings composition base only contains
+// fields the yaml explicitly set.
 const Config = z.object({
   apiKey: z.string().role('secret'),
-  apiKeyEnv: z.string().role('credential-ref').default(TAVILY_DEFAULT_API_KEY_ENV),
-  baseURL: z.string().default(TAVILY_DEFAULT_BASE_URL),
-  searchDepth: z.union(['basic', 'advanced']).default(TAVILY_DEFAULT_SEARCH_DEPTH),
-  topic: z.union(['general', 'news', 'finance']).default(TAVILY_DEFAULT_TOPIC),
-  days: z.number().step(1).min(1).default(TAVILY_DEFAULT_DAYS),
-  includeAnswer: z.boolean().default(TAVILY_DEFAULT_INCLUDE_ANSWER),
-  numResults: z.number().step(1).min(1).default(TAVILY_DEFAULT_NUM_RESULTS),
+  apiKeyEnv: z.string().role('credential-ref'),
+  baseURL: z.string(),
+  searchDepth: z.union(['basic', 'advanced']),
+  topic: z.union(['general', 'news', 'finance']),
+  days: z.number().step(1).min(1).max(365),
+  includeAnswer: z.boolean(),
+  includeRawContent: z.boolean(),
+  timeout: z.number().step(100).min(1000),
+  maxResults: z.number().step(1).min(1).max(20),
+  numResults: z.number().step(1).min(1).max(20),
 })
 
 function rehydrateSchema(serialized) {
@@ -60,16 +58,19 @@ try {
 // 3) validate typical values the way SettingsScopeController.decode does
 const cases = [
   ['absent section', {}],
-  ['resolved defaults', {
+  ['full explicit section', {
     apiKeyEnv: 'TAVILY_API_KEY', baseURL: 'https://api.tavily.com',
     searchDepth: 'basic', topic: 'general', days: 7,
-    includeAnswer: true, numResults: 5,
+    includeAnswer: true, includeRawContent: false,
+    timeout: 30000, maxResults: 5,
   }],
   ['user overrides', {
     apiKeyEnv: 'MY_KEY', baseURL: 'https://x', searchDepth: 'advanced',
-    topic: 'news', days: 3, includeAnswer: false, numResults: 10,
+    topic: 'news', days: 3, includeAnswer: false, includeRawContent: true,
+    timeout: 15000, maxResults: 10,
   }],
   ['string where number', { days: '7' }],
+  ['maxResults out of range', { maxResults: 21 }],
 ]
 for (const [label, value] of cases) {
   const failure = validateDraft(rehydrated, value)

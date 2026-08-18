@@ -30,11 +30,20 @@ export const TAVILY_DEFAULT_TOPIC = 'general'
 /** Default: request Tavily's generated answer and carry it as `content`. */
 export const TAVILY_DEFAULT_INCLUDE_ANSWER = true
 
+/** Default: do not ask Tavily to return raw page content (context-heavy). */
+export const TAVILY_DEFAULT_INCLUDE_RAW_CONTENT = false
+
+/** Default per-request timeout in milliseconds. */
+export const TAVILY_DEFAULT_TIMEOUT = 30_000
+
+/** Default result count when a request carries no `maxResults`. */
+export const TAVILY_DEFAULT_MAX_RESULTS = 5
+
 /** Credential reference resolved when the section names none. */
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.1.0'
+const USER_AGENT = 'dsh-plugin-tavily/0.2.0'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the
@@ -56,9 +65,15 @@ export interface TavilySearchProviderOptions {
   topic: 'general' | 'news' | 'finance'
   /** Whether to request Tavily's generated answer (`include_answer`). */
   includeAnswer: boolean
+  /** Whether to request Tavily's raw HTML content (`include_raw_content`). */
+  includeRawContent: boolean
+  /** Request timeout in milliseconds. */
+  timeout: number
   /** Recency window in days; sent only when set (news/finance topics). */
   days?: number
   /** Default result count when a request carries no `maxResults`. */
+  maxResults?: number
+  /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
 }
 
@@ -120,14 +135,17 @@ export class TavilySearchProvider implements WebSearchProvider {
     return ((options.apiKey?.length ?? 0) > 0 || options.resolveApiKey !== undefined)
       && isValidBaseUrl(options.baseURL)
       && (options.days === undefined || isPositiveInteger(options.days))
+      && (options.maxResults === undefined || isPositiveInteger(options.maxResults))
       && (options.numResults === undefined || isPositiveInteger(options.numResults))
+      && (options.timeout === undefined || options.timeout > 0)
   }
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     const options = this.resolveOptions()
     const apiKey = await this.apiKey(options, signal)
     // A per-request bound wins over the configured default; either may be absent.
-    const maxResults = request.maxResults ?? options.numResults
+    const maxResults = request.maxResults ?? options.maxResults ?? options.numResults
+    const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
     let response: Response
     try {
       response = await fetch(`${options.baseURL}/search`, {
@@ -144,14 +162,14 @@ export class TavilySearchProvider implements WebSearchProvider {
           search_depth: options.searchDepth,
           topic: options.topic,
           include_answer: options.includeAnswer,
+          include_raw_content: options.includeRawContent,
           ...maxResults !== undefined ? { max_results: maxResults } : {},
           ...options.days !== undefined ? { days: options.days } : {},
         }),
-        ...signal !== undefined ? { signal } : {},
+        ...requestSignal !== undefined ? { signal: requestSignal } : {},
       })
     } catch (error: unknown) {
-      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
-      throw new WebError(`Tavily search request failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
+      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
     }
 
     if (!response.ok) {
@@ -164,7 +182,10 @@ export class TavilySearchProvider implements WebSearchProvider {
       } catch (error: unknown) {
         // An abort fired mid-body must surface as WEB_ABORTED, not be swallowed
         // into a generic HTTP-error message — cancellation is not a provider
-        // error (the seam's cancellation contract).
+        // error (the seam's cancellation contract). A timeout is a provider error.
+        if (timeoutSignal?.aborted === true) {
+          throw new WebError(`Tavily search timed out after ${options.timeout}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+        }
         if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
         // Otherwise: the HTTP status is already captured in `message` above; a
         // malformed/non-JSON error body (normal for gateway 5xx/429s) can only
@@ -177,9 +198,7 @@ export class TavilySearchProvider implements WebSearchProvider {
       const payload = await response.json() as TavilySearchResponse
       return mapTavilyResponse(payload)
     } catch (error: unknown) {
-      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
-      if (error instanceof WebError) throw error
-      throw new WebError(`Tavily returned an unprocessable response body: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
+      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
     }
   }
 
@@ -227,6 +246,41 @@ function isPositiveInteger(value: number): boolean {
 /** True for a fetch/`AbortSignal` abort, surfaced as `WEB_ABORTED`. */
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+/**
+ * Combine an optional caller abort with a per-request timeout signal.
+ *
+ * The timeout signal is kept separate from the caller's signal so a timeout can
+ * be classified as a provider error while an external cancellation still maps to
+ * `WEB_ABORTED`.
+ */
+function makeRequestSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): { signal: AbortSignal | undefined; timeoutSignal: AbortSignal | undefined } {
+  if (timeoutMs === undefined || timeoutMs <= 0) return { signal, timeoutSignal: undefined }
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  if (signal === undefined) return { signal: timeoutSignal, timeoutSignal }
+  if (signal.aborted) return { signal, timeoutSignal }
+  return { signal: AbortSignal.any([signal, timeoutSignal]), timeoutSignal }
+}
+
+/**
+ * Classify one fetch/JSON failure into the provider's error taxonomy.
+ * @returns the appropriate WebError; throws it.
+ */
+function classifiedSearchError(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): WebError {
+  if (timeoutSignal?.aborted === true) {
+    return new WebError(`Tavily search timed out after ${timeoutMs}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+  }
+  if (signal?.aborted === true || isAbortError(error)) return searchAborted(signal, error)
+  return new WebError(`Tavily search request failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
 }
 
 /**

@@ -7,10 +7,16 @@
  * asked for and could not preview; staged text makes what is on screen exactly
  * what a save would store.
  *
- * A field shows its effective value — the user layer over the composition
- * layer over the schema default — and whether the user layer carries it. That
- * presence, not a value comparison, is what marks a field overridden: an
- * override equal to the composition default is still an override.
+ * A field shows its effective value — unless the composition layer pins it. The
+ * card deliberately implements the plugin's priority contract:
+ *
+ *   yaml/composition entry (`base`) > WebUI user layer > code default
+ *
+ * A field present in the composition `base` is rendered from that value and
+ * disabled, because the plugin host re-applies the entry over any WebUI value.
+ * A field present in the user layer is marked overridden. A field present in
+ * neither is rendered empty (or as its visible checkbox default) so the
+ * placeholder can advertise the code default.
  *
  * Self-contained: this plugin's client bundle cannot import the settings
  * shell's internals (client bundle purity gate), so the staged-form model the
@@ -36,6 +42,20 @@ export interface CardFieldSpec {
    * value this field accepts — which blocks the save rather than discarding it.
    */
   parse: (text: string) => FieldWrite | undefined
+  /**
+   * Value rendered when neither the composition layer nor the user layer
+   * carries the field. Used by checkboxes so a default like `includeAnswer:
+   * true` is visible before any user interaction; leave undefined for blank
+   * fields whose placeholder advertises the default.
+   */
+  fallback?: unknown
+  /**
+   * Legacy field names that should behave as the same logical value. Used for
+   * `maxResults` ← `numResults`: a yaml/UI value stored under an alias still
+   * pins or overrides the displayed field, and reset clears every alias so old
+   * overrides cannot resurrect after a migration.
+   */
+  aliases?: readonly string[]
 }
 
 /**
@@ -60,6 +80,12 @@ export interface CardFieldState {
    * reporting a state the pending edit already contradicts.
    */
   overridden: boolean
+  /**
+   * Whether the field is pinned by the composition layer (yaml config). Such
+   * fields are disabled and show a dedicated badge; WebUI edits cannot override
+   * them.
+   */
+  configCovered: boolean
   /** Whether the draft is not a value this field accepts, which blocks saving. */
   invalid: boolean
 }
@@ -111,13 +137,28 @@ interface PlannedWrite {
   run: (() => Promise<boolean>) | undefined
 }
 
+/** Constraints a numeric field can enforce before a save is offered. */
+export interface NumberFieldOptions {
+  /** Inclusive lower bound. */
+  min?: number
+  /** Inclusive upper bound. */
+  max?: number
+  /** Require a whole number. */
+  integer?: boolean
+  /** Legacy field names this numeric field should alias. */
+  aliases?: readonly string[]
+}
+
 /**
  * A whole-number field. An empty draft clears the field; any other draft that
- * is not a finite number blocks the save.
+ * is not an accepted number blocks the save. Optional constraints are checked
+ * in the same place scope validation would reject them, so the card does not
+ * stage a write it knows the Host will refuse.
  * @param field - field name inside the namespace section.
+ * @param options - optional bounds/integer requirement.
  * @returns the field's conversion spec.
  */
-export function numberField(field: string): CardFieldSpec {
+export function numberField(field: string, options: NumberFieldOptions = {}): CardFieldSpec {
   return {
     field,
     // A section that carries no number for this field renders empty rather
@@ -127,8 +168,67 @@ export function numberField(field: string): CardFieldSpec {
       const trimmed = text.trim()
       if (trimmed === '') return { kind: 'clear' }
       const parsed = Number(trimmed)
-      return Number.isFinite(parsed) ? { kind: 'set', value: parsed } : undefined
+      if (!Number.isFinite(parsed)) return undefined
+      if (options.integer === true && !Number.isInteger(parsed)) return undefined
+      if (options.min !== undefined && parsed < options.min) return undefined
+      if (options.max !== undefined && parsed > options.max) return undefined
+      return { kind: 'set', value: parsed }
     },
+    aliases: options.aliases,
+  }
+}
+
+/**
+ * A plain text field. An empty/whitespace-only draft clears the field so it
+ * re-inherits the code default.
+ * @param field - field name inside the namespace section.
+ * @returns the field's conversion spec.
+ */
+export function textField(field: string): CardFieldSpec {
+  return {
+    field,
+    format: value => typeof value === 'string' ? value : '',
+    parse: (text) => {
+      const trimmed = text.trim()
+      return trimmed === '' ? { kind: 'clear' } : { kind: 'set', value: trimmed }
+    },
+  }
+}
+
+/**
+ * A single-choice field rendered by a select. An empty draft clears the field.
+ * @param field - field name inside the namespace section.
+ * @param allowed - the values the schema accepts.
+ * @returns the field's conversion spec.
+ */
+export function selectField(field: string, allowed: readonly string[]): CardFieldSpec {
+  return {
+    field,
+    format: value => typeof value === 'string' && allowed.includes(value) ? value : '',
+    parse: (text) => {
+      if (text === '') return { kind: 'clear' }
+      return allowed.includes(text) ? { kind: 'set', value: text } : undefined
+    },
+  }
+}
+
+/**
+ * A boolean field rendered by a checkbox. The fallback makes the code default
+ * visible before a user stores their own choice.
+ * @param field - field name inside the namespace section.
+ * @param fallback - the code-level default value.
+ * @returns the field's conversion spec.
+ */
+export function booleanField(field: string, fallback: boolean): CardFieldSpec {
+  return {
+    field,
+    format: value => typeof value === 'boolean' ? String(value) : '',
+    parse: (text) => {
+      if (text === 'true') return { kind: 'set', value: true }
+      if (text === 'false') return { kind: 'set', value: false }
+      return undefined
+    },
+    fallback,
   }
 }
 
@@ -193,21 +293,43 @@ export class CardForm<T> {
   /**
    * Read one control's state.
    * @param field - field name of a section field or of a write-only control.
-   * @returns the draft text, whether a save would leave an override, and whether it is invalid.
+   * @returns the draft text and the badges/blocking flags a control renders.
    */
   field(field: string): CardFieldState {
     const staged = this.staged.get(field)
     if (this.secretSpecs.has(field)) {
-      return { text: staged?.text ?? '', overridden: false, invalid: false }
+      return { text: staged?.text ?? '', overridden: false, configCovered: false, invalid: false }
     }
     const spec = this.spec(field)
     if (staged === undefined) {
-      return { text: spec.format(this.sectionValue(field)), overridden: this.stored(field), invalid: false }
+      if (this.storedBase(field)) {
+        return {
+          text: spec.format(this.baseValue(field)),
+          overridden: false,
+          configCovered: true,
+          invalid: false,
+        }
+      }
+      if (this.stored(field)) {
+        return {
+          text: spec.format(this.userValue(field)),
+          overridden: true,
+          configCovered: false,
+          invalid: false,
+        }
+      }
+      return {
+        text: spec.fallback !== undefined ? spec.format(spec.fallback) : '',
+        overridden: false,
+        configCovered: false,
+        invalid: false,
+      }
     }
     const write = staged.clear ? { kind: 'clear' as const } : spec.parse(staged.text)
     return {
       text: staged.text,
       overridden: write?.kind === 'set',
+      configCovered: false,
       invalid: write === undefined,
     }
   }
@@ -220,7 +342,9 @@ export class CardForm<T> {
     return {
       edit: (field, text) => { this.stage(field, { text, clear: false }) },
       resetField: (field) => {
-        this.stage(field, { text: this.spec(field).format(this.baseValue(field)), clear: true })
+        const spec = this.spec(field)
+        const resetValue = this.baseValue(field) ?? spec.fallback
+        this.stage(field, { text: spec.format(resetValue), clear: true })
       },
       save: () => { void this.save() },
       discard: () => {
@@ -288,8 +412,12 @@ export class CardForm<T> {
   }
 
   private async clear(field: string): Promise<boolean> {
-    await this.scope.unset(field)
-    return !this.stored(field)
+    const user = this.userLayer() ?? {}
+    for (const name of this.allNames(field)) {
+      if (Object.hasOwn(user, name)) await this.scope.unset(name)
+    }
+    const remaining = this.userLayer() ?? {}
+    return !this.allNames(field).some(name => Object.hasOwn(remaining, name))
   }
 
   private async store(field: string, value: unknown): Promise<boolean> {
@@ -319,17 +447,40 @@ export class CardForm<T> {
     return (this.snapshotOf().value as Record<string, unknown> | undefined)?.[field]
   }
 
+  private allNames(field: string): string[] {
+    return [field, ...(this.spec(field).aliases ?? [])]
+  }
+
   private baseValue(field: string): unknown {
-    return (this.snapshotOf().base as Record<string, unknown> | undefined)?.[field]
+    const base = this.snapshotOf().base as Record<string, unknown> | undefined
+    if (base === undefined) return undefined
+    for (const name of this.allNames(field)) {
+      if (Object.hasOwn(base, name)) return base[name]
+    }
+    return undefined
   }
 
   private userLayer(): Record<string, unknown> | undefined {
     return this.snapshotOf().user as Record<string, unknown> | undefined
   }
 
+  private userValue(field: string): unknown {
+    const user = this.userLayer()
+    if (user === undefined) return undefined
+    for (const name of this.allNames(field)) {
+      if (Object.hasOwn(user, name)) return user[name]
+    }
+    return undefined
+  }
+
   private stored(field: string): boolean {
     const user = this.userLayer()
-    return user !== undefined && Object.hasOwn(user, field)
+    return user !== undefined && this.allNames(field).some(name => Object.hasOwn(user, name))
+  }
+
+  private storedBase(field: string): boolean {
+    const base = this.snapshotOf().base as Record<string, unknown> | undefined
+    return base !== undefined && this.allNames(field).some(name => Object.hasOwn(base, name))
   }
 
   private publish(): void {

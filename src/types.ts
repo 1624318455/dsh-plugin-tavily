@@ -21,6 +21,8 @@ export interface TavilySearchRequest {
   max_results?: number
   /** Ask Tavily to generate an answer for the query. */
   include_answer?: boolean
+  /** Ask Tavily to include the raw page content alongside each result. */
+  include_raw_content?: boolean
 }
 
 /** One entry of Tavily's flat `results[]`. */
