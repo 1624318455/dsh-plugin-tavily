@@ -43,7 +43,7 @@ export const TAVILY_DEFAULT_MAX_RESULTS = 5
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.3.0'
+const USER_AGENT = 'dsh-plugin-tavily/0.3.1'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the

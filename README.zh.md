@@ -65,9 +65,9 @@ dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
 - **基础设置（默认展开）**：
   - **API Key** —— 粘贴你的 Tavily 密钥。密钥经凭据服务写入，绝不进入设置文件。
   - **API Base URL** —— 留空使用 `https://api.tavily.com`；可填代理/自定义接口地址。
+  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`：先走 DeepSeek，再合并 Tavily 结果。两种模式都需要在 web 配置中选择 `searchProvider: tavily`。
   - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
 - **高级搜索参数（`🔧 高级 Tavily 请求参数`，默认收起）**：
-  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`：先走 DeepSeek，再合并 Tavily 结果。两种模式都需要在 web 配置中选择 `searchProvider: tavily`。
   - **最大结果数** —— 单次搜索返回网页结果数量（1–20，默认 5）。
   - **搜索深度** —— `basic`（快速省 token）或 `advanced`（深度检索，更耗 token）。
   - **搜索主题** —— `general`、`news` 或 `finance`。

@@ -65,9 +65,9 @@ Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)**
 - **Basic area (always visible)**:
   - **API key** — paste your Tavily key. It is stored through the credentials service, never in a settings file.
   - **API Base URL** — leave blank for `https://api.tavily.com`, or set a proxy/endpoint base.
+  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first`: run DeepSeek search first, then merge its results with Tavily. Both modes require the web config to select `searchProvider: tavily`.
   - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
 - **Advanced area (`🔧 Advanced Tavily request parameters`)**:
-  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first`: run DeepSeek search first, then merge its results with Tavily. Both modes require the web config to select `searchProvider: tavily`.
   - **Max results** — how many web results per search (1–20, default 5).
   - **Search depth** — `basic` (fast/cheap) or `advanced` (deeper, more tokens).
   - **Topic** — `general`, `news`, or `finance`.
