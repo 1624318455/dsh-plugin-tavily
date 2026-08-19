@@ -8,6 +8,10 @@
 
 import { WebError } from '@deepseek-ai/dsh-web'
 import type {
+  WebFetchBody,
+  WebFetchProvider,
+  WebFetchRequest,
+  WebFetchResult,
   WebSearchProvider,
   WebSearchRequest,
   WebSearchResult,
@@ -15,6 +19,8 @@ import type {
 } from '@deepseek-ai/dsh-web'
 import type {
   TavilyError,
+  TavilyExtractRequest,
+  TavilyExtractResponse,
   TavilyIncludeAnswer,
   TavilyIncludeRawContent,
   TavilyResult,
@@ -27,11 +33,17 @@ import type {
 /** Stable id this provider registers under. */
 export const TAVILY_PROVIDER_ID = 'tavily'
 
+/** Stable id the Tavily Extract fetch provider registers under. */
+export const TAVILY_EXTRACT_PROVIDER_ID = 'tavily-extract'
+
 /** Default Tavily endpoint; `/search` is the operation. */
 export const TAVILY_DEFAULT_BASE_URL = 'https://api.tavily.com'
 
 /** Usage (credit) endpoint appended to the base URL. */
 export const TAVILY_DEFAULT_USAGE_PATH = '/usage'
+
+/** Extract (page retrieval) endpoint appended to the base URL. */
+export const TAVILY_DEFAULT_EXTRACT_PATH = '/extract'
 
 /** Default search depth: `basic` (balanced cost/latency/relevance). */
 export const TAVILY_DEFAULT_SEARCH_DEPTH: TavilySearchDepth = 'basic'
@@ -307,6 +319,59 @@ export class TavilySearchProvider implements WebSearchProvider {
     }
   }
 
+  /**
+   * Verify connectivity with the resolved (possibly stored) API key by issuing a
+   * minimal `POST /search`. This is the host-side counterpart to the card's
+   * browser test — it runs where the stored key is available, whereas the
+   * browser cannot read stored secrets back.
+   * @param signal - optional cancellation signal.
+   * @returns `true` when Tavily accepted the request.
+   * @throws {@link WebError} (`WEB_PROVIDER_ERROR` / `WEB_ABORTED`) on failure.
+   */
+  async connectivityTest(signal?: AbortSignal): Promise<boolean> {
+    const options = this.resolveOptions()
+    const apiKey = await resolveRequestApiKey(options, signal)
+    const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
+    let response: Response
+    try {
+      response = await fetch(`${options.baseURL}/search`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'authorization': `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'accept': 'application/json',
+          'user-agent': USER_AGENT,
+        },
+        body: JSON.stringify({
+          query: 'connectivity test',
+          search_depth: 'basic',
+          topic: 'general',
+          include_answer: false,
+          max_results: 1,
+        }),
+        ...requestSignal !== undefined ? { signal: requestSignal } : {},
+      })
+    } catch (error: unknown) {
+      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+    }
+    if (!response.ok) {
+      let message = `Tavily connectivity test failed (HTTP ${response.status})`
+      try {
+        const parsed = await response.json() as TavilyError
+        const detail = parsed.detail?.error ?? parsed.error ?? parsed.message
+        if (detail !== undefined && detail.length > 0) message = detail
+      } catch (error: unknown) {
+        if (timeoutSignal?.aborted === true) {
+          throw new WebError(`Tavily connectivity test timed out after ${options.timeout}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+        }
+        if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      }
+      throw new WebError(message, 'WEB_PROVIDER_ERROR')
+    }
+    return true
+  }
+
   /** Best-effort secondary search: absence or failure degrades to Tavily only. */
   private async runSecondarySearch(
     search: HybridSearch,
@@ -442,6 +507,95 @@ export class TavilySearchProvider implements WebSearchProvider {
       }
     }
   }
+}
+
+/**
+ * A `WebFetchProvider` backed by Tavily's `POST /extract` endpoint: given one
+ * URL it returns the cleaned page content classified as text or html. It shares
+ * the Tavily credential/options resolution with the search provider, and
+ * registers under a distinct fetch-provider id (`tavily-extract`) so selecting
+ * the fetch provider never interferes with the search provider.
+ */
+export class TavilyExtractProvider implements WebFetchProvider {
+  readonly id = TAVILY_EXTRACT_PROVIDER_ID
+
+  /**
+   * @param resolveOptions - thunk producing the shared Tavily option snapshot
+   *   (endpoint base, timeout, credential reference).
+   */
+  constructor(private readonly resolveOptions: () => TavilySearchProviderOptions) {}
+
+  available(): boolean {
+    const options = this.resolveOptions()
+    return ((options.apiKey?.length ?? 0) > 0 || options.resolveApiKey !== undefined)
+      && isValidBaseUrl(options.baseURL)
+      && (options.timeout === undefined || options.timeout > 0)
+  }
+
+  async fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult> {
+    const options = this.resolveOptions()
+    const apiKey = await resolveRequestApiKey(options, signal)
+    const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
+
+    let response: Response
+    try {
+      response = await fetch(`${options.baseURL}${TAVILY_DEFAULT_EXTRACT_PATH}`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'authorization': `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'accept': 'application/json',
+          'user-agent': USER_AGENT,
+        },
+        body: JSON.stringify({ urls: [request.url] } satisfies TavilyExtractRequest),
+        ...requestSignal !== undefined ? { signal: requestSignal } : {},
+      })
+    } catch (error: unknown) {
+      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+    }
+
+    if (!response.ok) {
+      let message = `Tavily extract API error (HTTP ${response.status})`
+      try {
+        const parsed = await response.json() as TavilyError
+        const detail = parsed.detail?.error ?? parsed.error ?? parsed.message
+        if (detail !== undefined && detail.length > 0) message = detail
+      } catch (error: unknown) {
+        if (timeoutSignal?.aborted === true) {
+          throw new WebError(`Tavily extract timed out after ${options.timeout}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+        }
+        if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      }
+      throw new WebError(message, 'WEB_PROVIDER_ERROR')
+    }
+
+    // A successful non-2xx is impossible here (we returned above), so a body
+    // with no matching entry maps to an empty text body with the HTTP status.
+    try {
+      const payload = await response.json() as TavilyExtractResponse
+      const entry = (payload.results ?? []).find(item => item.url === request.url)
+        ?? (payload.results ?? [])[0]
+      const content = entry?.raw_content ?? ''
+      return {
+        url: response.url === '' ? request.url : response.url,
+        statusCode: response.status,
+        body: classifyFetchBody(content),
+        truncated: false,
+      }
+    } catch (error: unknown) {
+      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+    }
+  }
+}
+
+/**
+ * Classify Tavily's extracted content as `html` when it clearly contains markup
+ * or `text` otherwise (Tavily typically returns cleaned, LLM-ready text).
+ */
+function classifyFetchBody(content: string): WebFetchBody {
+  const looksHtml = /<\/?[a-z][\s\S]*?>/i.test(content)
+  return looksHtml ? { kind: 'html', content } : { kind: 'text', content }
 }
 
 /**

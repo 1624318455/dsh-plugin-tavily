@@ -18,13 +18,19 @@ if (apiKey === undefined || apiKey.length === 0) {
   process.exit(1)
 }
 
-// Minimal stand-in for the harness's ctx.web: apply() only needs registerSearchProvider
-// (plus the optional-settings seam hooks, which no-op when the service never mounts).
+// Minimal stand-in for the harness's ctx.web: apply() needs registerSearchProvider
+// and registerFetchProvider (plus the optional-settings seam hooks, which no-op
+// when the service never mounts).
 const registered = []
+const fetched = []
 const ctx = {
   web: {
     registerSearchProvider(provider) {
       registered.push(provider)
+      return () => {}
+    },
+    registerFetchProvider(provider) {
+      fetched.push(provider)
       return () => {}
     },
   },
@@ -45,6 +51,16 @@ if (provider.id !== 'tavily') {
 }
 if (provider.available() !== true) {
   console.error('FAIL — provider reports unavailable despite a valid apiKey.')
+  process.exit(1)
+}
+
+const fetchProvider = fetched[0]
+if (fetchProvider === undefined || fetchProvider.id !== 'tavily-extract') {
+  console.error('FAIL — apply() did not register the tavily-extract fetch provider.')
+  process.exit(1)
+}
+if (fetchProvider.available() !== true) {
+  console.error('FAIL — fetch provider reports unavailable despite a valid apiKey.')
   process.exit(1)
 }
 

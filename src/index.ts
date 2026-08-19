@@ -22,6 +22,7 @@ import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-sett
 import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '@deepseek-ai/dsh-web'
 import {
   TavilySearchProvider,
+  TavilyExtractProvider,
   TAVILY_DEFAULT_API_KEY_ENV,
   TAVILY_DEFAULT_BASE_URL,
   TAVILY_DEFAULT_INCLUDE_ANSWER,
@@ -30,6 +31,7 @@ import {
   TAVILY_DEFAULT_SEARCH_DEPTH,
   TAVILY_DEFAULT_TIMEOUT,
   TAVILY_DEFAULT_TOPIC,
+  TAVILY_EXTRACT_PROVIDER_ID,
   TAVILY_PROVIDER_ID,
 } from './provider'
 import type { HybridSearch, HybridSearchConfig, TavilySearchProviderOptions } from './provider'
@@ -43,9 +45,12 @@ export {
   TAVILY_DEFAULT_SEARCH_DEPTH,
   TAVILY_DEFAULT_TIMEOUT,
   TAVILY_DEFAULT_TOPIC,
+  TAVILY_DEFAULT_EXTRACT_PATH,
   TAVILY_DEFAULT_USAGE_PATH,
+  TAVILY_EXTRACT_PROVIDER_ID,
   TAVILY_PROVIDER_ID,
   TavilySearchProvider,
+  TavilyExtractProvider,
   estimateSearchCredits,
 } from './provider'
 export type { TavilySearchProviderOptions } from './provider'
@@ -265,6 +270,11 @@ export function apply(ctx: Context, config: Config): void {
       // Re-evaluate per search so a UI/config switch takes effect live.
       () => hybridFor(ctx, current),
     ),
+  )
+  // Dual-half: also register a Tavily Extract-backed fetch provider. Selecting
+  // it is opt-in via `fetchProvider: tavily-extract` (or DSH_WEB_FETCH_PROVIDER).
+  ctx.web.registerFetchProvider(
+    new TavilyExtractProvider(() => resolveOptions(ctx, current(), entry)),
   )
 }
 

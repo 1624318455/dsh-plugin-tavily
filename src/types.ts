@@ -115,3 +115,19 @@ export interface TavilyUsage {
   key?: TavilyUsageKey
   account?: TavilyUsageAccount
 }
+
+/** One extracted page from `POST /extract`. */
+export interface TavilyExtractEntry {
+  url: string
+  raw_content?: string | null
+}
+
+/** Body sent to Tavily's extract endpoint. */
+export interface TavilyExtractRequest {
+  urls: string[]
+}
+
+/** Tavily's extract response envelope. */
+export interface TavilyExtractResponse {
+  results?: TavilyExtractEntry[]
+}
