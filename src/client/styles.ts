@@ -135,6 +135,8 @@ const CSS = `
 .dsh-tavily-test-hint { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-tertiary); }
 .dsh-tavily-test-success { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-success, var(--dsw-alias-label-primary)); }
 .dsh-tavily-test-error { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-error); }
+.dsh-tavily-usage-area { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.dsh-tavily-usage-estimate { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
 .dsh-tavily-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 0 4px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .dsh-tavily-failed { flex: 1; min-width: 0; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-error); }
 .dsh-tavily-discard,

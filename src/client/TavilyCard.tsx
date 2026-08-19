@@ -21,6 +21,17 @@ export type TavilyCardProps =
   & InjectFace<TavilyCardFace>
 
 /**
+ * Format a rough token count into a short magnitude, e.g. `3.8k` or `1.2M`.
+ * @param tokens - the approximate token count.
+ * @returns a compact human-readable magnitude.
+ */
+function formatTokenHint(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`
+  return String(tokens)
+}
+
+/**
  * Render the Tavily card.
  * @param props - locale copy, the card snapshot, and its form actions.
  * @returns the card.
@@ -82,6 +93,7 @@ export function TavilyCard(props: TavilyCardProps) {
         options={[
           { value: 'tavily-only', label: t('searchModeTavilyOnly') },
           { value: 'deepseek-first', label: t('searchModeDeepseekFirst') },
+          { value: 'tavily-first', label: t('searchModeTavilyFirst') },
         ]}
         onEdit={(text) => { props.edit('searchMode', text) }}
         onReset={() => { props.resetField('searchMode') }}
@@ -108,6 +120,46 @@ export function TavilyCard(props: TavilyCardProps) {
                 : state.apiTest.detail === 'need-key-configured'
                   ? t('testApiKeyConfiguredNeedReentry')
                   : `${t('testApiFailed')} ${state.apiTest.detail}`}
+            </p>
+          )
+          : null}
+      </div>
+
+      <div className="dsh-tavily-usage-area">
+        <p className="dsh-tavily-usage-estimate" role="status">
+          {t('usageEstimateLabel')}
+          {state.estimate.credits} {t('usageEstimateCredits')}, ~{formatTokenHint(state.estimate.tokenHint)}
+        </p>
+        <button
+          type="button"
+          className="dsh-tavily-test"
+          disabled={state.usage.status === 'checking' || !state.apiKeyWritable}
+          onClick={props.checkUsage}
+        >
+          {state.usage.status === 'checking' ? t('checkingUsage') : t('checkUsage')}
+        </button>
+        <p className="dsh-tavily-test-hint">{t('checkUsageHint')}</p>
+        {state.usage.status === 'success' && state.usage.key
+          ? (
+            <p className="dsh-tavily-test-success" role="status">
+              {t('usageResultLabel')}
+              {state.usage.key.used ?? 0}
+              {t('usageResultOf')}
+              {state.usage.key.limit != null ? String(state.usage.key.limit) : t('usageUnlimited')}
+              {t('usageResultSearch')}
+              {state.usage.key.searchUsed ?? 0}
+              {state.usage.plan != null && state.usage.plan !== '' ? ` (${state.usage.plan})` : ''}
+            </p>
+          )
+          : null}
+        {state.usage.status === 'error'
+          ? (
+            <p className="dsh-tavily-test-error" role="alert">
+              {state.usage.detail === 'need-key'
+                ? t('testApiNeedKey')
+                : state.usage.detail === 'need-key-configured'
+                  ? t('testApiKeyConfiguredNeedReentry')
+                  : `${t('usageFailed')} ${state.usage.detail}`}
             </p>
           )
           : null}
@@ -353,6 +405,36 @@ export function TavilyCard(props: TavilyCardProps) {
           {...state.country}
           onEdit={(text) => { props.edit('country', text) }}
           onReset={() => { props.resetField('country') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-retry-max-attempts"
+          label={t('tavilyRetryMaxAttempts')}
+          hint={t('tavilyRetryMaxAttemptsHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          numeric
+          placeholder="2"
+          disabled={disabled}
+          {...state.retryMaxAttempts}
+          onEdit={(text) => { props.edit('retryMaxAttempts', text) }}
+          onReset={() => { props.resetField('retryMaxAttempts') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-cache-ttl"
+          label={t('tavilyCacheTtl')}
+          hint={t('tavilyCacheTtlHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          numeric
+          placeholder="0"
+          disabled={disabled}
+          {...state.cacheTtlSeconds}
+          onEdit={(text) => { props.edit('cacheTtlSeconds', text) }}
+          onReset={() => { props.resetField('cacheTtlSeconds') }}
         />
         <ValueField
           id="plugin-config-tavily-timeout"

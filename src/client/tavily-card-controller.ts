@@ -85,8 +85,12 @@ export interface TavilySettings {
   country?: string
   /** Default result count when a request carries no `maxResults`. */
   maxResults?: number
+  /** Extra attempts after a rate-limited (429) response. */
+  retryMaxAttempts?: number
+  /** Query-cache TTL in seconds (0 disables). */
+  cacheTtlSeconds?: number
   /** Search composition mode used by the Tavily provider. */
-  searchMode?: 'tavily-only' | 'deepseek-first'
+  searchMode?: 'tavily-only' | 'deepseek-first' | 'tavily-first'
 }
 
 /** Result of the card's browser-side API connectivity test. */
@@ -95,6 +99,36 @@ export interface TavilyApiTestState {
   /** Error detail when `status` is `error`; empty otherwise. */
   detail: string
 }
+
+/** Live cost preview derived from the card's current drafts (no API call). */
+export interface TavilyEstimate {
+  /** Estimated Tavily credits for one search at the current depth. */
+  credits: number
+  /** Rough advisory token count for the current result/chunk settings. */
+  tokenHint: number
+}
+
+/** Result of the card's browser-side credit-usage check (`GET /usage`). */
+export interface TavilyUsageState {
+  status: 'idle' | 'checking' | 'success' | 'error'
+  /** Error detail when `status` is `error`; empty otherwise. */
+  detail: string
+  /** Key-scoped usage when the check succeeded. */
+  key?: { used?: number; limit?: number | null; searchUsed?: number }
+  /** Account plan name when the check succeeded. */
+  plan?: string
+}
+
+/** Minimal `GET /usage` envelope the card reads (client bundle cannot import Host types). */
+interface TavilyUsageResponse {
+  key?: {
+    usage?: number
+    limit?: number | null
+    search_usage?: number
+  }
+  account?: { current_plan?: string }
+}
+
 
 /** What the credentials domain last reported, and for which reference. */
 interface CredentialState {
@@ -142,6 +176,10 @@ export interface TavilyCardState extends CardShell {
   excludeDomains: CardFieldState
   /** Country boost. */
   country: CardFieldState
+  /** Extra 429 retry attempts. */
+  retryMaxAttempts: CardFieldState
+  /** Query-cache TTL in seconds. */
+  cacheTtlSeconds: CardFieldState
   /** Request timeout in milliseconds. */
   timeout: CardFieldState
   /** Search composition mode. */
@@ -154,6 +192,10 @@ export interface TavilyCardState extends CardShell {
   apiKeyWritable: boolean
   /** Last API connectivity test outcome. */
   apiTest: TavilyApiTestState
+  /** Live credit/token estimate from the current drafts. */
+  estimate: TavilyEstimate
+  /** Last credit-usage check outcome. */
+  usage: TavilyUsageState
 }
 
 /** The registration-side face the Tavily card's slot entry injects. */
@@ -164,6 +206,8 @@ export interface TavilyCardFace extends CardActions {
   }
   /** Run a lightweight connectivity test against Tavily with the drafts currently on screen. */
   testApi: () => void
+  /** Check current credit usage against Tavily with the drafts currently on screen. */
+  checkUsage: () => void
 }
 
 /** Bridges the `web-search-tavily` scope and the credentials domain onto the card. */
@@ -172,6 +216,7 @@ export class TavilyCardController {
   private readonly store: SnapshotStore<TavilyCardState>
   private credential: CredentialState = { ref: '', configured: false, writable: true }
   private apiTest: TavilyApiTestState = { status: 'idle', detail: '' }
+  private usage: TavilyUsageState = { status: 'idle', detail: '' }
 
   /**
    * @param scope - the bound settings scope for the `web-search-tavily` namespace.
@@ -202,7 +247,9 @@ export class TavilyCardController {
         listField('includeDomains'),
         listField('excludeDomains'),
         textField('country'),
-        selectField('searchMode', ['tavily-only', 'deepseek-first']),
+        numberField('retryMaxAttempts', { min: 0, max: 5, integer: true }),
+        numberField('cacheTtlSeconds', { min: 0, max: 3600, integer: true }),
+        selectField('searchMode', ['tavily-only', 'deepseek-first', 'tavily-first']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
@@ -231,13 +278,30 @@ export class TavilyCardController {
       includeDomains: this.form.field('includeDomains'),
       excludeDomains: this.form.field('excludeDomains'),
       country: this.form.field('country'),
+      retryMaxAttempts: this.form.field('retryMaxAttempts'),
+      cacheTtlSeconds: this.form.field('cacheTtlSeconds'),
       timeout: this.form.field('timeout'),
       searchMode: this.form.field('searchMode'),
       apiKey: this.form.field(API_KEY_FIELD),
       apiKeyConfigured: this.credential.configured,
       apiKeyWritable: this.credential.writable,
       apiTest: this.apiTest,
+      estimate: this.computeEstimate(),
+      usage: this.usage,
     }
+  }
+
+  /**
+   * Compute a live cost preview from the current drafts. Credits derive from
+   * the search depth; the token count is a rough advisory magnitude from the
+   * result count and per-source chunk count.
+   */
+  private computeEstimate(): TavilyEstimate {
+    const depth = this.form.field('searchDepth').text
+    const credits = depth === 'advanced' ? 2 : 1
+    const results = parsePositiveInt(this.form.field('maxResults').text, 5)
+    const chunks = parsePositiveInt(this.form.field('chunksPerSource').text, 3)
+    return { credits, tokenHint: results * chunks * 250 }
   }
 
   /**
@@ -300,6 +364,7 @@ export class TavilyCardController {
       hooks: { tavilyCard: this.store },
       ...this.form.actions(),
       testApi: () => { void this.runApiTest() },
+      checkUsage: () => { void this.runUsageCheck() },
     }
   }
 
@@ -360,6 +425,64 @@ export class TavilyCardController {
   }
 
   /**
+   * Check current credit usage against Tavily's `/usage` endpoint using the
+   * values on screen. Like the connectivity test, a stored key cannot be read
+   * back by the browser, so checking an already-configured key requires
+   * re-entering it once.
+   */
+  private async runUsageCheck(): Promise<void> {
+    const key = this.form.field(API_KEY_FIELD).text.trim()
+    if (key === '') {
+      this.usage = {
+        status: 'error',
+        detail: this.credential.configured ? 'need-key-configured' : 'need-key',
+      }
+      if (this.credential.configured) document.getElementById('plugin-config-tavily-key')?.focus()
+      this.store.set(this.projection())
+      return
+    }
+    const baseURL = this.form.field('baseURL').text.trim() || DEFAULT_BASE_URL
+    this.usage = { status: 'checking', detail: '' }
+    this.store.set(this.projection())
+    try {
+      const response = await fetch(`${baseURL}/usage`, {
+        method: 'GET',
+        headers: {
+          'authorization': `Bearer ${key}`,
+          'accept': 'application/json',
+        },
+      })
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`
+        try {
+          const body = await response.json() as { detail?: { error?: string }; error?: string; message?: string }
+          detail = body.detail?.error ?? body.error ?? body.message ?? detail
+        } catch (_errorBodyReadFailure) {
+          // Keep the HTTP status detail.
+        }
+        throw new Error(detail)
+      }
+      const parsed = await response.json() as TavilyUsageResponse
+      this.usage = {
+        status: 'success',
+        detail: '',
+        key: {
+          used: parsed.key?.usage,
+          limit: parsed.key?.limit ?? null,
+          searchUsed: parsed.key?.search_usage,
+        },
+        plan: parsed.account?.current_plan,
+      }
+    } catch (error: unknown) {
+      this.usage = {
+        status: 'error',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+    this.store.set(this.projection())
+  }
+
+  /**
    * Write the staged key, then re-read whether the Host now holds one.
    * @param value - the staged credential literal.
    * @returns whether the Host reports a configured credential afterwards.
@@ -384,4 +507,15 @@ export class TavilyCardController {
 function refOf(snapshot: SettingsScopeSnapshot<TavilySettings>): string {
   const declared = snapshot.value?.apiKeyEnv
   return declared !== undefined && declared.length > 0 ? declared : DEFAULT_API_KEY_REF
+}
+
+/**
+ * Parse a draft text into a positive integer fallback.
+ * @param text - the draft text; blank/non-numeric yields the fallback.
+ * @param fallback - the value used when the text is not a positive integer.
+ * @returns the parsed number or the fallback.
+ */
+function parsePositiveInt(text: string, fallback: number): number {
+  const parsed = Number(text.trim())
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }

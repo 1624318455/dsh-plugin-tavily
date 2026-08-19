@@ -17,18 +17,27 @@ export type TavilyCardLocaleKey =
   | 'tavilyTimeout' | 'tavilyTimeoutHint'
   | 'tavilyDays' | 'tavilyDaysHint'
   | 'tavilySearchMode' | 'tavilySearchModeHint'
-  | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst'
+  | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst' | 'searchModeTavilyFirst'
   | 'advancedTitle'
   | 'searchDepthBasic' | 'searchDepthAdvanced' | 'searchDepthFast' | 'searchDepthUltraFast'
-  | 'topicGeneral' | 'topicNews' | 'topicFinance' | 'tavilyChunksPerSource' | 'tavilyChunksPerSourceHint'
-  | 'tavilyTimeRange' | 'tavilyTimeRangeHint' | 'tavilyStartDate' | 'tavilyStartDateHint'
-  | 'tavilyEndDate' | 'tavilyEndDateHint' | 'tavilyIncludeImages' | 'tavilyIncludeImagesHint'
-  | 'tavilyIncludeImageDescriptions' | 'tavilyIncludeImageDescriptionsHint' | 'tavilyIncludeFavicon' | 'tavilyIncludeFaviconHint'
-  | 'tavilyIncludeDomains' | 'tavilyIncludeDomainsHint' | 'tavilyExcludeDomains' | 'tavilyExcludeDomainsHint'
+  | 'topicGeneral' | 'topicNews' | 'topicFinance'
+  | 'tavilyRetryMaxAttempts' | 'tavilyRetryMaxAttemptsHint'
+  | 'tavilyCacheTtl' | 'tavilyCacheTtlHint'
+  | 'tavilyChunksPerSource' | 'tavilyChunksPerSourceHint'
+  | 'tavilyTimeRange' | 'tavilyTimeRangeHint'
+  | 'tavilyStartDate' | 'tavilyStartDateHint'
+  | 'tavilyEndDate' | 'tavilyEndDateHint'
+  | 'tavilyIncludeImages' | 'tavilyIncludeImagesHint'
+  | 'tavilyIncludeImageDescriptions' | 'tavilyIncludeImageDescriptionsHint'
+  | 'tavilyIncludeFavicon' | 'tavilyIncludeFaviconHint'
+  | 'tavilyIncludeDomains' | 'tavilyIncludeDomainsHint'
+  | 'tavilyExcludeDomains' | 'tavilyExcludeDomainsHint'
   | 'tavilyCountry' | 'tavilyCountryHint'
   | 'includeAnswerRecommended' | 'includeAnswerTrue' | 'includeAnswerAdvanced' | 'includeAnswerFalse'
   | 'rawContentFalse' | 'rawContentMarkdown' | 'rawContentText'
   | 'testApi' | 'testingApi' | 'testApiHint' | 'testApiNeedKey' | 'testApiKeyConfiguredNeedReentry' | 'testApiSuccess' | 'testApiFailed'
+  | 'usageEstimateLabel' | 'usageEstimateCredits' | 'checkUsage' | 'checkingUsage' | 'checkUsageHint'
+  | 'usageResultLabel' | 'usageResultOf' | 'usageResultSearch' | 'usageUnlimited' | 'usageFailed'
   | 'overridden' | 'configCovered' | 'reset' | 'readOnly' | 'expand' | 'collapse'
   | 'save' | 'saving' | 'discard' | 'unsaved' | 'saveFailed' | 'invalidNumber' | 'invalidList'
 
@@ -52,7 +61,7 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyMaxResults: 'Max results',
   tavilyMaxResultsHint: 'Number of web results per search (1–20); blank uses 5.',
   tavilySearchDepth: 'Search depth',
-  tavilySearchDepthHint: 'basic is balanced; advanced performs deeper retrieval; fast/ultra-fast prioritize latency.',
+  tavilySearchDepthHint: 'basic is fast/cheap; advanced performs deeper retrieval and costs more tokens.',
   tavilyTopic: 'Topic',
   tavilyTopicHint: 'general is the whole web; news prioritizes recency; finance targets market content.',
   tavilyIncludeAnswer: 'Generated answer',
@@ -64,9 +73,14 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyDays: 'Recency window (days)',
   tavilyDaysHint: 'Only results from the last N days; leave blank to disable.',
   tavilySearchMode: 'Search mode',
-  tavilySearchModeHint: 'tavily-only: direct Tavily (DeepSeek is not consulted). deepseek-first: run DeepSeek first, merge its results with Tavily; requires the web config to select searchProvider: tavily.',
+  tavilySearchModeHint: 'tavily-only: direct Tavily (DeepSeek is not consulted). deepseek-first: run DeepSeek first, merge its results with Tavily. tavily-first: run Tavily first, then merge DeepSeek results. Hybrid modes require the web config to select searchProvider: tavily.',
   searchModeTavilyOnly: 'Tavily only (skip DeepSeek)',
   searchModeDeepseekFirst: 'DeepSeek first, then Tavily (combined)',
+  searchModeTavilyFirst: 'Tavily first, then DeepSeek (combined)',
+  tavilyRetryMaxAttempts: 'Rate-limit retries',
+  tavilyRetryMaxAttemptsHint: 'Extra attempts after a 429 response (0–5); waits honor retry-after with a bounded backoff.',
+  tavilyCacheTtl: 'Cache TTL (seconds)',
+  tavilyCacheTtlHint: 'Cache identical searches to save credits; 0 disables (0–3600).',
   advancedTitle: '🔧 Advanced Tavily request parameters',
   searchDepthBasic: 'basic (balanced)',
   searchDepthAdvanced: 'advanced (deep, 2 credits)',
@@ -109,6 +123,16 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   testApiKeyConfiguredNeedReentry: 'A key is configured, but browsers cannot read stored secrets. Re-enter the key above once to test it (it will not be saved again).',
   testApiSuccess: 'Connection successful — Tavily accepted the request.',
   testApiFailed: 'Connection failed:',
+  usageEstimateLabel: 'Estimated cost for one search: ',
+  usageEstimateCredits: 'credit(s),',
+  checkUsage: 'Check usage',
+  checkingUsage: 'Checking…',
+  checkUsageHint: 'Checks current credit usage; like testing, a stored key must be re-entered once.',
+  usageResultLabel: 'Usage: ',
+  usageResultOf: ' / ',
+  usageResultSearch: ' · ',
+  usageUnlimited: 'unlimited',
+  usageFailed: 'Usage check failed:',
   overridden: 'Overridden',
   configCovered: 'Covered by config file; edit the yaml to change.',
   reset: 'Reset to default',
@@ -137,7 +161,7 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyMaxResults: '最大结果数',
   tavilyMaxResultsHint: '单次搜索返回的网页结果数量（1–20）；留空使用 5。',
   tavilySearchDepth: '搜索深度',
-  tavilySearchDepthHint: 'basic 均衡；advanced 深度检索；fast/ultra-fast 更低延迟。',
+  tavilySearchDepthHint: 'basic 均衡；advanced 深度（2 积分）；fast/ultra-fast 更低延迟（1 积分）。',
   tavilyTopic: '搜索主题',
   tavilyTopicHint: 'general 通用搜索；news 新闻时效；finance 财经内容。',
   tavilyIncludeAnswer: '生成摘要答案',
@@ -149,9 +173,14 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyDays: '时间窗口（天）',
   tavilyDaysHint: '只返回最近 N 天的结果；留空表示不限制。',
   tavilySearchMode: '搜索模式',
-  tavilySearchModeHint: 'tavily-only：直接走 Tavily，不查询 DeepSeek；deepseek-first：先走 DeepSeek，再合并 Tavily 结果。两种模式都需在 web 配置中选择 searchProvider: tavily。',
+  tavilySearchModeHint: 'tavily-only：直接走 Tavily，不查询 DeepSeek；deepseek-first：先走 DeepSeek，再合并 Tavily 结果；tavily-first：先走 Tavily，再合并 DeepSeek 结果。混合模式都需在 web 配置中选择 searchProvider: tavily。',
   searchModeTavilyOnly: '直接使用 Tavily（跳过 DeepSeek）',
   searchModeDeepseekFirst: '先 DeepSeek，再 Tavily（综合结果）',
+  searchModeTavilyFirst: '先 Tavily，再 DeepSeek（综合结果）',
+  tavilyRetryMaxAttempts: '限流重试次数',
+  tavilyRetryMaxAttemptsHint: '收到 429 后的额外重试次数（0–5）；等待会遵循 retry-after 并做有界退避。',
+  tavilyCacheTtl: '缓存时长（秒）',
+  tavilyCacheTtlHint: '缓存相同的查询以节省额度；0 表示关闭（0–3600）。',
   advancedTitle: '🔧 高级 Tavily 请求参数',
   searchDepthBasic: 'basic（均衡）',
   searchDepthAdvanced: 'advanced（深度，2 积分）',
@@ -194,6 +223,16 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   testApiKeyConfiguredNeedReentry: '已检测到配置了密钥，但浏览器出于安全设计无法读取已保存的密钥；请在上方重新输入一次密钥来完成测试（不会重复保存）。',
   testApiSuccess: '连接成功 —— Tavily 已接受请求。',
   testApiFailed: '连接失败：',
+  usageEstimateLabel: '单次搜索预估成本：',
+  usageEstimateCredits: '积分，',
+  checkUsage: '检查用量',
+  checkingUsage: '检查中…',
+  checkUsageHint: '检查当前额度使用情况；与测试一样，已保存的密钥需重新输入一次。',
+  usageResultLabel: '用量：',
+  usageResultOf: ' / ',
+  usageResultSearch: ' · ',
+  usageUnlimited: '不限',
+  usageFailed: '用量检查失败：',
   overridden: '已覆盖',
   configCovered: '该参数已被配置文件覆盖，请修改 yaml。',
   reset: '恢复默认',

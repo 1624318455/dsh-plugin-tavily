@@ -84,3 +84,34 @@ export interface TavilyError {
   error?: string
   message?: string
 }
+
+/** Per-key usage from `GET /usage` (limited by the current billing cycle). */
+export interface TavilyUsageKey {
+  usage?: number
+  limit?: number | null
+  search_usage?: number
+  extract_usage?: number
+  crawl_usage?: number
+  map_usage?: number
+  research_usage?: number
+}
+
+/** Per-account usage from `GET /usage`. */
+export interface TavilyUsageAccount {
+  current_plan?: string
+  plan_usage?: number
+  plan_limit?: number
+  paygo_usage?: number
+  paygo_limit?: number
+  search_usage?: number
+  extract_usage?: number
+  crawl_usage?: number
+  map_usage?: number
+  research_usage?: number
+}
+
+/** Normalized `GET /usage` envelope. */
+export interface TavilyUsage {
+  key?: TavilyUsageKey
+  account?: TavilyUsageAccount
+}

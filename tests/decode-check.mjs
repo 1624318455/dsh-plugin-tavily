@@ -28,8 +28,10 @@ const Config = z.object({
   excludeDomains: z.array(z.string()),
   country: z.string(),
   maxResults: z.number().step(1).min(1).max(20),
+  retryMaxAttempts: z.number().step(1).min(0).max(5),
+  cacheTtlSeconds: z.number().step(1).min(0).max(3600),
   numResults: z.number().step(1).min(1).max(20),
-  searchMode: z.union(['tavily-only', 'deepseek-first']),
+  searchMode: z.union(['tavily-only', 'deepseek-first', 'tavily-first']),
 })
 
 function rehydrateSchema(serialized) {
@@ -89,6 +91,8 @@ const cases = [
   ['string where number', { days: '7' }],
   ['maxResults out of range', { maxResults: 21 }],
   ['chunksPerSource out of range', { chunksPerSource: 0 }],
+  ['retry/cache valid', { retryMaxAttempts: 2, cacheTtlSeconds: 60 }],
+  ['retry attempts too high', { retryMaxAttempts: 9 }],
   ['invalid timeRange', { timeRange: 'foo' }],
   ['invalid searchMode', { searchMode: 'hybrid' }],
 ]

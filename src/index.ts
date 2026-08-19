@@ -32,7 +32,7 @@ import {
   TAVILY_DEFAULT_TOPIC,
   TAVILY_PROVIDER_ID,
 } from './provider'
-import type { HybridSearch, TavilySearchProviderOptions } from './provider'
+import type { HybridSearch, HybridSearchConfig, TavilySearchProviderOptions } from './provider'
 
 export {
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -43,10 +43,13 @@ export {
   TAVILY_DEFAULT_SEARCH_DEPTH,
   TAVILY_DEFAULT_TIMEOUT,
   TAVILY_DEFAULT_TOPIC,
+  TAVILY_DEFAULT_USAGE_PATH,
   TAVILY_PROVIDER_ID,
   TavilySearchProvider,
+  estimateSearchCredits,
 } from './provider'
 export type { TavilySearchProviderOptions } from './provider'
+export type { TavilyUsage } from './types'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'web-search-tavily'
@@ -105,6 +108,10 @@ export interface Config {
   country?: string
   /** Default result count when a request carries no `maxResults`. Defaults to 5. */
   maxResults?: number
+  /** Extra attempts after a rate-limited (429) response. Defaults to 2. */
+  retryMaxAttempts?: number
+  /** Query-cache TTL in seconds; `0` disables the in-memory result cache. Defaults to 0. */
+  cacheTtlSeconds?: number
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
@@ -112,9 +119,11 @@ export interface Config {
    * - `tavily-only`: the Tavily provider answers directly and does not consult DeepSeek.
    * - `deepseek-first`: the Tavily provider first runs the registered DeepSeek
    *   search provider (when available) and merges its results with Tavily's.
+   * - `tavily-first`: run Tavily first, then the registered DeepSeek provider
+   *   (when available) and merge its results with Tavily's.
    * Defaults to `tavily-only`.
    */
-  searchMode?: 'tavily-only' | 'deepseek-first'
+  searchMode?: 'tavily-only' | 'deepseek-first' | 'tavily-first'
 }
 
 export const Config: z<Config> = z.object({
@@ -138,8 +147,10 @@ export const Config: z<Config> = z.object({
   excludeDomains: z.array(z.string()).description('Exclude these domains from results.'),
   country: z.string().description('Boost results from one country (general topic).'),
   maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.'),
+  retryMaxAttempts: z.number().step(1).min(0).max(5).description('Extra attempts after a rate-limited (429) response.'),
+  cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
-  searchMode: z.union(['tavily-only', 'deepseek-first'] as const).description('Search composition: Tavily-only or DeepSeek-first with Tavily merge.'),
+  searchMode: z.union(['tavily-only', 'deepseek-first', 'tavily-first'] as const).description('Search composition: Tavily-only, DeepSeek-first, or Tavily-first with merge.'),
 })
 
 /** Settings namespace carrying this provider's endpoint, depth, topic, and key reference. */
@@ -195,16 +206,20 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
     ...effective.includeDomains !== undefined ? { includeDomains: effective.includeDomains } : {},
     ...effective.excludeDomains !== undefined ? { excludeDomains: effective.excludeDomains } : {},
     ...effective.country !== undefined ? { country: effective.country } : {},
+    ...effective.retryMaxAttempts !== undefined ? { retryMaxAttempts: effective.retryMaxAttempts } : {},
+    ...effective.cacheTtlSeconds !== undefined ? { cacheTtlMs: effective.cacheTtlSeconds * 1000 } : {},
   }
 }
 
 /**
- * Build the optional secondary search used by `deepseek-first` mode.
+ * Build the optional secondary search used by the hybrid modes.
  *
- * The web seam deliberately exposes no provider lookup API, so this reads the
- * registry through the runtime's internal map. It looks for a provider whose id
- * contains `deepseek` and is available; if none exists the mode degrades to a
- * Tavily-only search (the provider's own catch hides any absence/failure).
+ * The web seam deliberately exposes no public provider-lookup API, so this
+ * reads the registry through the runtime's internal map as a best-effort
+ * fallback (guarded: an absent map simply yields no secondary). It looks for a
+ * registered provider whose id is `deepseek` (or contains `deepseek`) and is
+ * `available()`; if none exists the mode degrades to a Tavily-only search (the
+ * provider's own catch also hides any absence/failure).
  */
 function hybridDeepSeekSearch(ctx: Context): HybridSearch {
   return async (request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult | undefined> => {
@@ -218,6 +233,18 @@ function hybridDeepSeekSearch(ctx: Context): HybridSearch {
     if (secondary === undefined || !secondary.available()) return undefined
     return secondary.search(request, signal)
   }
+}
+
+/**
+ * Resolve the active hybrid composition from the current config, or `undefined`
+ * for Tavily-only. `deepseek-first` leads with DeepSeek sources; `tavily-first`
+ * leads with Tavily's; both merge the secondary provider when present.
+ */
+function hybridFor(ctx: Context, current: () => Config): HybridSearchConfig | undefined {
+  const mode = current().searchMode ?? 'tavily-only'
+  if (mode === 'deepseek-first') return { run: hybridDeepSeekSearch(ctx), secondaryFirst: true }
+  if (mode === 'tavily-first') return { run: hybridDeepSeekSearch(ctx), secondaryFirst: false }
+  return undefined
 }
 
 /** Register the Tavily search provider with `ctx.web`. */
@@ -236,7 +263,7 @@ export function apply(ctx: Context, config: Config): void {
     new TavilySearchProvider(
       () => resolveOptions(ctx, current(), entry),
       // Re-evaluate per search so a UI/config switch takes effect live.
-      () => current().searchMode === 'deepseek-first' ? hybridDeepSeekSearch(ctx) : undefined,
+      () => hybridFor(ctx, current),
     ),
   )
 }
