@@ -75,6 +75,10 @@ const CSS = `
 .dsh-tavily-badge-config { background: var(--dsw-alias-bg-module-warning, var(--dsw-alias-bg-module-platform)); color: var(--dsw-alias-label-tertiary); }
 .dsh-tavily-badge-muted { border-radius: 999px; padding: 1px 8px; font-size: 11px; line-height: 17px; white-space: nowrap; color: var(--dsw-alias-label-tertiary); }
 .dsh-tavily-reset { border: none; background: none; padding: 0; font: inherit; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.dsh-tavily-wiring { border: 1px solid var(--dsw-alias-border-l2); border-left: 3px solid var(--dsw-alias-brand-primary); border-radius: 8px; background: var(--dsw-alias-bg-layer-3); padding: 10px 12px; margin: 12px 0 4px; }
+.dsh-tavily-wiring-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; line-height: 1.5; color: var(--dsw-alias-label-primary); }
+.dsh-tavily-wiring-copy { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.dsh-tavily-wiring-code { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--dsw-alias-bg-module-platform); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); white-space: pre; overflow-x: auto; }
 .dsh-tavily-reset:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
 .dsh-tavily-reset:disabled { cursor: default; }
 .dsh-tavily-input {

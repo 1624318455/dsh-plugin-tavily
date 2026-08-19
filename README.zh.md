@@ -80,6 +80,23 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
 - **凭据在位** —— `TAVILY_API_KEY` 存在于凭据存储（`~/.dsh/.credentials.yaml`），不在环境变量中。
 - **结果特征** —— Tavily 结果在 `content` 中携带生成式 answer 摘要；内置 DeepSeek provider 不产生该字段。
 
+### 故障排查：仍然看到「没有 DeepSeek API key」报错
+
+> **`searchMode` ≠ 提供方选择。** `searchMode: tavily-only` 只表示「Tavily 被选中后不去合并 DeepSeek」，它**不会**让 `web_search` 使用 Tavily。
+
+如果 `web_search` 仍报 `DeepSeek search has no API key for "DEEPSEEK_API_KEY"…`，说明 harness 把 `web_search` 路由到了**内置 DeepSeek 提供方**，而不是本插件的 Tavily。路由由 `web` seam 的 `searchProvider`（或 `DSH_WEB_SEARCH_PROVIDER`）决定，与本插件的 `searchMode` 是两回事。真正选中 Tavily 即可修复：
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: web
+  config:
+    searchProvider: tavily
+```
+
+…或 `export DSH_WEB_SEARCH_PROVIDER=tavily` 后重启 **dsh**。此后 `web_search` 由 Tavily 应答，`tavily-only` 模式下不会再调 DeepSeek。当当前提供方不是 Tavily 时，插件会打印启动告警，卡片也会显示接线提示。
+
+> 若这是在**agent/assistant 环境**（如某聊天应用的 `web_search`）里看到的，那是另一套 `web` seam、并未安装本插件——它始终用默认 DeepSeek 后端，与你的 Tavily 安装无关。
+
 ## 🖥️ 图形界面使用（推荐普通用户）
 
 打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片。

@@ -252,6 +252,20 @@ function hybridFor(ctx: Context, current: () => Config): HybridSearchConfig | un
   return undefined
 }
 
+/**
+ * Resolve the web seam's configured search-provider id (`config.searchProvider`
+ * ?? `DSH_WEB_SEARCH_PROVIDER`), or `undefined` when selection is left to the
+ * seam's auto-selection rules.
+ *
+ * This is an informational read of a runtime-internal field (mirroring how the
+ * hybrid mode reads the registry map); it never mutates anything and is only
+ * used to warn when the active provider is not Tavily.
+ */
+function configuredSearchProviderId(ctx: Context): string | undefined {
+  const web = ctx.web as unknown as { searchProviderId?: string }
+  return web.searchProviderId
+}
+
 /** Register the Tavily search provider with `ctx.web`. */
 export function apply(ctx: Context, config: Config): void {
   const entry = config
@@ -276,6 +290,33 @@ export function apply(ctx: Context, config: Config): void {
   ctx.web.registerFetchProvider(
     new TavilyExtractProvider(() => resolveOptions(ctx, current(), entry)),
   )
+  warnIfNotActiveSearchProvider(ctx)
+}
+
+/**
+ * Warn loudly when this plugin is installed but its `searchMode` is being
+ * mistaken for provider selection: `searchMode` only decides how Tavily merges
+ * the DeepSeek provider **once Tavily is selected**; it does NOT choose the
+ * provider that answers `web_search`. That choice is the `web` seam's
+ * `searchProvider` (or `DSH_WEB_SEARCH_PROVIDER`). Without it, `web_search`
+ * keeps being answered by the built-in DeepSeek provider, which is exactly where
+ * the confusing "no DeepSeek API key" error comes from.
+ */
+function warnIfNotActiveSearchProvider(ctx: Context): void {
+  const logger = ctx.logger('dsh-plugin-tavily')
+  const active = configuredSearchProviderId(ctx)
+  const FIX = 'set web.config.searchProvider: tavily in cordis.patch.yml (or export DSH_WEB_SEARCH_PROVIDER=tavily), then restart dsh.'
+  if (active !== undefined && active !== TAVILY_PROVIDER_ID) {
+    logger.warn(
+      `web_search is currently configured to the "${active}" search provider, NOT Tavily.`
+      + ` SearchMode only controls how Tavily merges DeepSeek once selected — to actually use this plugin, ${FIX}`,
+    )
+  } else if (active === undefined) {
+    logger.warn(
+      'no web search provider is explicitly selected; the seam auto-selects.'
+      + ` If web_search is answered by another provider (e.g. deepseek) and reports a missing DeepSeek key, ${FIX}`,
+    )
+  }
 }
 
 /** Copy only explicitly defined entry fields, so validation-added keys never count as yaml overrides. */

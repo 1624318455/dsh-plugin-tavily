@@ -21,6 +21,21 @@ export type TavilyCardProps =
   & InjectFace<TavilyCardFace>
 
 /**
+ * Copyable snippet wiring `web_search` to this provider. `searchMode` above is
+ * only how Tavily merges DeepSeek once selected — it does NOT select the
+ * provider. Without this `web.searchProvider: tavily` (or
+ * `DSH_WEB_SEARCH_PROVIDER=tavily`), `web_search` keeps using the built-in
+ * DeepSeek provider, which is where the confusing "no DeepSeek API key" error
+ * comes from.
+ */
+const WIRING_YAML = `# ~/.dsh/profiles/<profile>/cordis.patch.yml
+- id: web
+  config:
+    searchProvider: tavily
+    # fetchProvider: tavily-extract   # optional: URL retrieval via Tavily Extract
+`
+
+/**
  * Format a rough token count into a short magnitude, e.g. `3.8k` or `1.2M`.
  * @param tokens - the approximate token count.
  * @returns a compact human-readable magnitude.
@@ -51,6 +66,11 @@ export function TavilyCard(props: TavilyCardProps) {
       onDiscard={props.discard}
     >
       {/* ① Basic settings (always visible). */}
+      <div className="dsh-tavily-wiring">
+        <p className="dsh-tavily-wiring-title" role="note">{t('wiringTitle')}</p>
+        <p className="dsh-tavily-wiring-copy">{t('wiringHint')}</p>
+        <pre className="dsh-tavily-wiring-code">{WIRING_YAML}</pre>
+      </div>
       <SecretField
         id="plugin-config-tavily-key"
         label={t('tavilyApiKey')}

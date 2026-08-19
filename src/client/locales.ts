@@ -18,6 +18,7 @@ export type TavilyCardLocaleKey =
   | 'tavilyDays' | 'tavilyDaysHint'
   | 'tavilySearchMode' | 'tavilySearchModeHint'
   | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst' | 'searchModeTavilyFirst'
+  | 'wiringTitle' | 'wiringHint'
   | 'advancedTitle'
   | 'searchDepthBasic' | 'searchDepthAdvanced' | 'searchDepthFast' | 'searchDepthUltraFast'
   | 'topicGeneral' | 'topicNews' | 'topicFinance'
@@ -73,10 +74,12 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyDays: 'Recency window (days)',
   tavilyDaysHint: 'Only results from the last N days; leave blank to disable.',
   tavilySearchMode: 'Search mode',
-  tavilySearchModeHint: 'tavily-only: direct Tavily (DeepSeek is not consulted). deepseek-first: run DeepSeek first, merge its results with Tavily. tavily-first: run Tavily first, then merge DeepSeek results. Hybrid modes require the web config to select searchProvider: tavily.',
+  tavilySearchModeHint: 'Only controls how Tavily merges DeepSeek AFTER being selected; it does NOT select the provider. To answer web_search with Tavily you must also set web.searchProvider: tavily (see the wiring note above).',
   searchModeTavilyOnly: 'Tavily only (skip DeepSeek)',
   searchModeDeepseekFirst: 'DeepSeek first, then Tavily (combined)',
   searchModeTavilyFirst: 'Tavily first, then DeepSeek (combined)',
+  wiringTitle: 'Verify provider wiring: this is NOT enough on its own',
+  wiringHint: 'Search mode only decides how Tavily merges DeepSeek once Tavily is selected. It does NOT make web_search use Tavily — without the snippet below, web_search keeps answering through the built-in DeepSeek provider (that is where a confusing “no DeepSeek API key” error comes from).',
   tavilyRetryMaxAttempts: 'Rate-limit retries',
   tavilyRetryMaxAttemptsHint: 'Extra attempts after a 429 response (0–5); waits honor retry-after with a bounded backoff.',
   tavilyCacheTtl: 'Cache TTL (seconds)',
@@ -173,10 +176,12 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyDays: '时间窗口（天）',
   tavilyDaysHint: '只返回最近 N 天的结果；留空表示不限制。',
   tavilySearchMode: '搜索模式',
-  tavilySearchModeHint: 'tavily-only：直接走 Tavily，不查询 DeepSeek；deepseek-first：先走 DeepSeek，再合并 Tavily 结果；tavily-first：先走 Tavily，再合并 DeepSeek 结果。混合模式都需在 web 配置中选择 searchProvider: tavily。',
+  tavilySearchModeHint: '只控制 Tavily 被选中后如何合并 DeepSeek，并不负责选择提供方。要让 web_search 真走 Tavily，还必须同时设置 web.searchProvider: tavily（见上方接线提示）。',
   searchModeTavilyOnly: '直接使用 Tavily（跳过 DeepSeek）',
   searchModeDeepseekFirst: '先 DeepSeek，再 Tavily（综合结果）',
   searchModeTavilyFirst: '先 Tavily，再 DeepSeek（综合结果）',
+  wiringTitle: '请确认提供方接线：仅此页设置还不够',
+  wiringHint: '搜索模式只决定 Tavily 被选中后如何合并 DeepSeek，并不会让 web_search 使用 Tavily。若不设置下方片段，web_search 仍会由内置 DeepSeek 提供方应答——那正是“没有 DeepSeek API key”报错的来源。',
   tavilyRetryMaxAttempts: '限流重试次数',
   tavilyRetryMaxAttemptsHint: '收到 429 后的额外重试次数（0–5）；等待会遵循 retry-after 并做有界退避。',
   tavilyCacheTtl: '缓存时长（秒）',

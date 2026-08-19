@@ -80,6 +80,23 @@ The `web_search` tool's output schema is provider-agnostic — the model never s
 - **Credential in place** — `TAVILY_API_KEY` exists in the credentials store (`~/.dsh/.credentials.yaml`), not in the environment.
 - **Result fingerprint** — a Tavily result carries a generated-answer summary in `content`; the built-in DeepSeek provider does not produce one.
 
+### Troubleshooting: "I still get a DeepSeek API key error"
+
+> **`searchMode` ≠ provider selection.** `searchMode: tavily-only` only tells Tavily, **once it is selected**, not to merge DeepSeek results. It does **not** make `web_search` use Tavily.
+
+If `web_search` still reports `DeepSeek search has no API key for "DEEPSEEK_API_KEY"…`, the harness is routing `web_search` to the **built-in DeepSeek provider**, not to this plugin. That routing is decided by the `web` seam's `searchProvider` (or `DSH_WEB_SEARCH_PROVIDER`), which is separate from this plugin's `searchMode`. Fix it by actually selecting Tavily:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: web
+  config:
+    searchProvider: tavily
+```
+
+…or `export DSH_WEB_SEARCH_PROVIDER=tavily`, then restart **dsh**. After that, `web_search` is answered by Tavily and DeepSeek is never consulted in `tavily-only` mode. The plugin logs a startup warning (and the card shows a wiring note) when the active provider is not Tavily.
+
+> If you see this error in an **agent/assistant harness** (e.g. a chat app's own `web_search`), that is a different `web` seam which has not installed this plugin — it always uses the default DeepSeek backend and is unrelated to your Tavily install.
+
 ## 🖥️ GUI usage (recommended for most users)
 
 Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)** card.
