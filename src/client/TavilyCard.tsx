@@ -145,6 +145,8 @@ export function TavilyCard(props: TavilyCardProps) {
           options={[
             { value: 'basic', label: t('searchDepthBasic') },
             { value: 'advanced', label: t('searchDepthAdvanced') },
+            { value: 'fast', label: t('searchDepthFast') },
+            { value: 'ultra-fast', label: t('searchDepthUltraFast') },
           ]}
           onEdit={(text) => { props.edit('searchDepth', text) }}
           onReset={() => { props.resetField('searchDepth') }}
@@ -168,29 +170,189 @@ export function TavilyCard(props: TavilyCardProps) {
           onEdit={(text) => { props.edit('topic', text) }}
           onReset={() => { props.resetField('topic') }}
         />
-        <CheckField
+        <SelectField
           id="plugin-config-tavily-include-answer"
           label={t('tavilyIncludeAnswer')}
           hint={t('tavilyIncludeAnswerHint')}
           overriddenLabel={t('overridden')}
           configCoveredLabel={t('configCovered')}
           resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder={t('includeAnswerRecommended')}
           disabled={disabled}
           {...state.includeAnswer}
+          options={[
+            { value: 'true', label: t('includeAnswerTrue') },
+            { value: 'advanced', label: t('includeAnswerAdvanced') },
+            { value: 'false', label: t('includeAnswerFalse') },
+          ]}
           onEdit={(text) => { props.edit('includeAnswer', text) }}
           onReset={() => { props.resetField('includeAnswer') }}
         />
-        <CheckField
+        <SelectField
           id="plugin-config-tavily-include-raw-content"
           label={t('tavilyIncludeRawContent')}
           hint={t('tavilyIncludeRawContentHint')}
           overriddenLabel={t('overridden')}
           configCoveredLabel={t('configCovered')}
           resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder="false"
           disabled={disabled}
           {...state.includeRawContent}
+          options={[
+            { value: 'false', label: t('rawContentFalse') },
+            { value: 'true', label: t('rawContentMarkdown') },
+            { value: 'markdown', label: t('rawContentMarkdown') },
+            { value: 'text', label: t('rawContentText') },
+          ]}
           onEdit={(text) => { props.edit('includeRawContent', text) }}
           onReset={() => { props.resetField('includeRawContent') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-chunks-per-source"
+          label={t('tavilyChunksPerSource')}
+          hint={t('tavilyChunksPerSourceHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          numeric
+          placeholder="3"
+          disabled={disabled}
+          {...state.chunksPerSource}
+          onEdit={(text) => { props.edit('chunksPerSource', text) }}
+          onReset={() => { props.resetField('chunksPerSource') }}
+        />
+        <SelectField
+          id="plugin-config-tavily-time-range"
+          label={t('tavilyTimeRange')}
+          hint={t('tavilyTimeRangeHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder={t('tavilyDaysHint')}
+          disabled={disabled}
+          {...state.timeRange}
+          options={[
+            { value: 'day', label: 'day' },
+            { value: 'week', label: 'week' },
+            { value: 'month', label: 'month' },
+            { value: 'year', label: 'year' },
+            { value: 'd', label: 'd' },
+            { value: 'w', label: 'w' },
+            { value: 'm', label: 'm' },
+            { value: 'y', label: 'y' },
+          ]}
+          onEdit={(text) => { props.edit('timeRange', text) }}
+          onReset={() => { props.resetField('timeRange') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-start-date"
+          label={t('tavilyStartDate')}
+          hint={t('tavilyStartDateHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder="YYYY-MM-DD"
+          disabled={disabled}
+          {...state.startDate}
+          onEdit={(text) => { props.edit('startDate', text) }}
+          onReset={() => { props.resetField('startDate') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-end-date"
+          label={t('tavilyEndDate')}
+          hint={t('tavilyEndDateHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder="YYYY-MM-DD"
+          disabled={disabled}
+          {...state.endDate}
+          onEdit={(text) => { props.edit('endDate', text) }}
+          onReset={() => { props.resetField('endDate') }}
+        />
+        <CheckField
+          id="plugin-config-tavily-include-images"
+          label={t('tavilyIncludeImages')}
+          hint={t('tavilyIncludeImagesHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          disabled={disabled}
+          {...state.includeImages}
+          onEdit={(text) => { props.edit('includeImages', text) }}
+          onReset={() => { props.resetField('includeImages') }}
+        />
+        <CheckField
+          id="plugin-config-tavily-include-image-descriptions"
+          label={t('tavilyIncludeImageDescriptions')}
+          hint={t('tavilyIncludeImageDescriptionsHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          disabled={disabled}
+          {...state.includeImageDescriptions}
+          onEdit={(text) => { props.edit('includeImageDescriptions', text) }}
+          onReset={() => { props.resetField('includeImageDescriptions') }}
+        />
+        <CheckField
+          id="plugin-config-tavily-include-favicon"
+          label={t('tavilyIncludeFavicon')}
+          hint={t('tavilyIncludeFaviconHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          disabled={disabled}
+          {...state.includeFavicon}
+          onEdit={(text) => { props.edit('includeFavicon', text) }}
+          onReset={() => { props.resetField('includeFavicon') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-include-domains"
+          label={t('tavilyIncludeDomains')}
+          hint={t('tavilyIncludeDomainsHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidList')}
+          placeholder="example.com, docs.example.org"
+          disabled={disabled}
+          {...state.includeDomains}
+          onEdit={(text) => { props.edit('includeDomains', text) }}
+          onReset={() => { props.resetField('includeDomains') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-exclude-domains"
+          label={t('tavilyExcludeDomains')}
+          hint={t('tavilyExcludeDomainsHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidList')}
+          placeholder="spam.com, ads.example.org"
+          disabled={disabled}
+          {...state.excludeDomains}
+          onEdit={(text) => { props.edit('excludeDomains', text) }}
+          onReset={() => { props.resetField('excludeDomains') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-country"
+          label={t('tavilyCountry')}
+          hint={t('tavilyCountryHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder="japan"
+          disabled={disabled}
+          {...state.country}
+          onEdit={(text) => { props.edit('country', text) }}
+          onReset={() => { props.resetField('country') }}
         />
         <ValueField
           id="plugin-config-tavily-timeout"

@@ -72,17 +72,37 @@ export interface Config {
   /** Endpoint base; `/search` is appended. Defaults to the public API. */
   baseURL?: string
   /** Search depth sent as Tavily's `search_depth`. Defaults to `basic`. */
-  searchDepth?: 'basic' | 'advanced'
+  searchDepth?: 'basic' | 'advanced' | 'fast' | 'ultra-fast'
   /** Topic sent as Tavily's `topic`. Defaults to `general`. */
   topic?: 'general' | 'news' | 'finance'
   /** Recency window in days; sent only when set (news/finance topics). */
   days?: number
-  /** Whether to request Tavily's generated answer. Defaults to `true`. */
-  includeAnswer?: boolean
-  /** Whether to request Tavily raw page content. Defaults to `false`. */
-  includeRawContent?: boolean
+  /** Answer request: quick (`true`/`basic`) or detailed (`advanced`). Defaults to `true`. */
+  includeAnswer?: boolean | 'basic' | 'advanced'
+  /** Raw content request: boolean, `markdown`, or `text`. Defaults to `false`. */
+  includeRawContent?: boolean | 'markdown' | 'text'
   /** Request timeout in milliseconds. Defaults to 30000. */
   timeout?: number
+  /** Snippet chunks per source (1–3). Defaults to 3. */
+  chunksPerSource?: number
+  /** Recency preset for news/finance topics (e.g. `day`, `week`, `month`). */
+  timeRange?: 'day' | 'week' | 'month' | 'year' | 'd' | 'w' | 'm' | 'y'
+  /** Include only results published/updated after this `YYYY-MM-DD`. */
+  startDate?: string
+  /** Include only results published/updated before this `YYYY-MM-DD`. */
+  endDate?: string
+  /** Collect query-related and per-source images. */
+  includeImages?: boolean
+  /** With `includeImages`, add a description per image. */
+  includeImageDescriptions?: boolean
+  /** Include the favicon URL for each result. */
+  includeFavicon?: boolean
+  /** Only include these domains in results. */
+  includeDomains?: string[]
+  /** Exclude these domains from results. */
+  excludeDomains?: string[]
+  /** Boost results from one country (general topic). */
+  country?: string
   /** Default result count when a request carries no `maxResults`. Defaults to 5. */
   maxResults?: number
   /** @deprecated Use {@link maxResults} instead. */
@@ -101,12 +121,22 @@ export const Config: z<Config> = z.object({
   apiKey: z.string().role('secret').description('Literal Tavily API key. Prefer storing the key through the credentials service instead.'),
   apiKeyEnv: z.string().role('credential-ref').description('Credential reference (environment variable name) resolved for each search.'),
   baseURL: z.string().description('Tavily-compatible endpoint base; `/search` is appended.'),
-  searchDepth: z.union(['basic', 'advanced'] as const).description('basic is faster/cheaper; advanced performs deeper retrieval.'),
+  searchDepth: z.union(['basic', 'advanced', 'fast', 'ultra-fast'] as const).description('Search depth: basic (balanced), advanced (deeper), fast, ultra-fast (lowest latency).'),
   topic: z.union(['general', 'news', 'finance'] as const).description('Search topic: general web, news, or finance.'),
   days: z.number().step(1).min(1).max(365).description('Recency window in days; used with news/finance topics.'),
-  includeAnswer: z.boolean().description('Request Tavily to generate an answer summary.'),
-  includeRawContent: z.boolean().description('Request raw page content; greatly increases context token usage.'),
+  includeAnswer: z.union([z.boolean(), z.union(['basic', 'advanced'] as const)]).description('Answer request: true/basic quick, advanced detailed.'),
+  includeRawContent: z.union([z.boolean(), z.union(['markdown', 'text'] as const)]).description('Raw page content: boolean, markdown, or text; greatly increases context token usage.'),
   timeout: z.number().step(100).min(1000).description('Request timeout in milliseconds.'),
+  chunksPerSource: z.number().step(1).min(1).max(3).description('Snippet chunks per source (1–3); larger is richer, more tokens.'),
+  timeRange: z.union(['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] as const).description('Recency preset for news/finance topics.'),
+  startDate: z.string().description('Include only results after this YYYY-MM-DD date.'),
+  endDate: z.string().description('Include only results before this YYYY-MM-DD date.'),
+  includeImages: z.boolean().description('Collect query-related and per-source images.'),
+  includeImageDescriptions: z.boolean().description('With includeImages, add a description per image.'),
+  includeFavicon: z.boolean().description('Include the favicon URL for each result.'),
+  includeDomains: z.array(z.string()).description('Only include these domains in results.'),
+  excludeDomains: z.array(z.string()).description('Exclude these domains from results.'),
+  country: z.string().description('Boost results from one country (general topic).'),
   maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
   searchMode: z.union(['tavily-only', 'deepseek-first'] as const).description('Search composition: Tavily-only or DeepSeek-first with Tavily merge.'),
@@ -155,6 +185,16 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
     timeout: effective.timeout ?? TAVILY_DEFAULT_TIMEOUT,
     maxResults: effective.maxResults ?? effective.numResults ?? TAVILY_DEFAULT_MAX_RESULTS,
     ...effective.days !== undefined ? { days: effective.days } : {},
+    ...effective.chunksPerSource !== undefined ? { chunksPerSource: effective.chunksPerSource } : {},
+    ...effective.timeRange !== undefined ? { timeRange: effective.timeRange } : {},
+    ...effective.startDate !== undefined ? { startDate: effective.startDate } : {},
+    ...effective.endDate !== undefined ? { endDate: effective.endDate } : {},
+    ...effective.includeImages !== undefined ? { includeImages: effective.includeImages } : {},
+    ...effective.includeImageDescriptions !== undefined ? { includeImageDescriptions: effective.includeImageDescriptions } : {},
+    ...effective.includeFavicon !== undefined ? { includeFavicon: effective.includeFavicon } : {},
+    ...effective.includeDomains !== undefined ? { includeDomains: effective.includeDomains } : {},
+    ...effective.excludeDomains !== undefined ? { excludeDomains: effective.excludeDomains } : {},
+    ...effective.country !== undefined ? { country: effective.country } : {},
   }
 }
 

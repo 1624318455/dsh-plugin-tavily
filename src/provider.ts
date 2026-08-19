@@ -13,7 +13,15 @@ import type {
   WebSearchResult,
   WebSearchSource,
 } from '@deepseek-ai/dsh-web'
-import type { TavilyError, TavilyResult, TavilySearchResponse } from './types'
+import type {
+  TavilyError,
+  TavilyIncludeAnswer,
+  TavilyIncludeRawContent,
+  TavilyResult,
+  TavilySearchDepth,
+  TavilySearchResponse,
+  TavilyTimeRange,
+} from './types'
 
 /** Stable id this provider registers under. */
 export const TAVILY_PROVIDER_ID = 'tavily'
@@ -21,17 +29,20 @@ export const TAVILY_PROVIDER_ID = 'tavily'
 /** Default Tavily endpoint; `/search` is the operation. */
 export const TAVILY_DEFAULT_BASE_URL = 'https://api.tavily.com'
 
-/** Default search depth: `basic` (faster, cheaper) rather than `advanced`. */
-export const TAVILY_DEFAULT_SEARCH_DEPTH = 'basic'
+/** Default search depth: `basic` (balanced cost/latency/relevance). */
+export const TAVILY_DEFAULT_SEARCH_DEPTH: TavilySearchDepth = 'basic'
 
 /** Default topic: the general web (not news or finance). */
 export const TAVILY_DEFAULT_TOPIC = 'general'
 
-/** Default: request Tavily's generated answer and carry it as `content`. */
-export const TAVILY_DEFAULT_INCLUDE_ANSWER = true
+/** Default: request Tavily's generated quick answer and carry it as `content`. */
+export const TAVILY_DEFAULT_INCLUDE_ANSWER: TavilyIncludeAnswer = true
 
 /** Default: do not ask Tavily to return raw page content (context-heavy). */
-export const TAVILY_DEFAULT_INCLUDE_RAW_CONTENT = false
+export const TAVILY_DEFAULT_INCLUDE_RAW_CONTENT: TavilyIncludeRawContent = false
+
+/** Default snippet chunks per source (Tavily's own default). */
+export const TAVILY_DEFAULT_CHUNKS_PER_SOURCE = 3
 
 /** Default per-request timeout in milliseconds. */
 export const TAVILY_DEFAULT_TIMEOUT = 30_000
@@ -59,18 +70,38 @@ export interface TavilySearchProviderOptions {
   apiKeyEnv?: string
   /** Endpoint base; `/search` is appended. */
   baseURL: string
-  /** Search depth sent as Tavily's `search_depth`. */
-  searchDepth: 'basic' | 'advanced'
+  /** Search depth sent as Tavily's `search_depth` (basic/advanced/fast/ultra-fast). */
+  searchDepth: TavilySearchDepth
   /** Topic sent as Tavily's `topic`. */
   topic: 'general' | 'news' | 'finance'
-  /** Whether to request Tavily's generated answer (`include_answer`). */
-  includeAnswer: boolean
-  /** Whether to request Tavily's raw HTML content (`include_raw_content`). */
-  includeRawContent: boolean
+  /** Answer request: `true`/`basic` (quick) or `advanced` (detailed). */
+  includeAnswer: TavilyIncludeAnswer
+  /** Raw content request: boolean, `markdown`, or `text`. */
+  includeRawContent: TavilyIncludeRawContent
   /** Request timeout in milliseconds. */
   timeout: number
   /** Recency window in days; sent only when set (news/finance topics). */
   days?: number
+  /** Snippet chunks per source (1–3, Tavily default 3). */
+  chunksPerSource?: number
+  /** Recency preset (news/finance topics); e.g. `day`, `week`, `month`. */
+  timeRange?: TavilyTimeRange
+  /** Include results published/updated after this `YYYY-MM-DD`. */
+  startDate?: string
+  /** Include results published/updated before this `YYYY-MM-DD`. */
+  endDate?: string
+  /** Collect query-related and per-source images. */
+  includeImages?: boolean
+  /** With `includeImages`, add a description per image. */
+  includeImageDescriptions?: boolean
+  /** Include the favicon URL for each result. */
+  includeFavicon?: boolean
+  /** Only include these domains in results. */
+  includeDomains?: string[]
+  /** Exclude these domains from results. */
+  excludeDomains?: string[]
+  /** Boost results from one country (general topic). */
+  country?: string
   /** Default result count when a request carries no `maxResults`. */
   maxResults?: number
   /** @deprecated Use {@link maxResults} instead. */
@@ -148,6 +179,7 @@ export class TavilySearchProvider implements WebSearchProvider {
     return ((options.apiKey?.length ?? 0) > 0 || options.resolveApiKey !== undefined)
       && isValidBaseUrl(options.baseURL)
       && (options.days === undefined || isPositiveInteger(options.days))
+      && (options.chunksPerSource === undefined || isPositiveInteger(options.chunksPerSource))
       && (options.maxResults === undefined || isPositiveInteger(options.maxResults))
       && (options.numResults === undefined || isPositiveInteger(options.numResults))
       && (options.timeout === undefined || options.timeout > 0)
@@ -208,6 +240,16 @@ export class TavilySearchProvider implements WebSearchProvider {
           include_raw_content: options.includeRawContent,
           ...maxResults !== undefined ? { max_results: maxResults } : {},
           ...options.days !== undefined ? { days: options.days } : {},
+          ...options.chunksPerSource !== undefined ? { chunks_per_source: options.chunksPerSource } : {},
+          ...options.timeRange !== undefined ? { time_range: options.timeRange } : {},
+          ...options.startDate !== undefined ? { start_date: options.startDate } : {},
+          ...options.endDate !== undefined ? { end_date: options.endDate } : {},
+          ...options.includeImages !== undefined ? { include_images: options.includeImages } : {},
+          ...options.includeImageDescriptions !== undefined ? { include_image_descriptions: options.includeImageDescriptions } : {},
+          ...options.includeFavicon !== undefined ? { include_favicon: options.includeFavicon } : {},
+          ...options.includeDomains !== undefined && options.includeDomains.length > 0 ? { include_domains: options.includeDomains } : {},
+          ...options.excludeDomains !== undefined && options.excludeDomains.length > 0 ? { exclude_domains: options.excludeDomains } : {},
+          ...options.country !== undefined && options.country.length > 0 ? { country: options.country } : {},
         }),
         ...requestSignal !== undefined ? { signal: requestSignal } : {},
       })

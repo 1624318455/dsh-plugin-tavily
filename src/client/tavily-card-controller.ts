@@ -26,7 +26,7 @@
 import type { IApiClient } from '@deepseek-ai/dsh-client-connection/client'
 import type { SettingsScope, SettingsScopeSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  booleanField, CardForm, numberField, selectField, textField,
+  booleanField, CardForm, listField, numberField, selectField, textField, valueSelectField,
   type CardActions, type CardFieldState, type CardShell,
 } from './card-form.ts'
 
@@ -52,17 +52,37 @@ export interface TavilySettings {
   /** Provider endpoint; blank inherits the provider default. */
   baseURL?: string
   /** Search depth sent as Tavily's `search_depth`. */
-  searchDepth?: 'basic' | 'advanced'
+  searchDepth?: 'basic' | 'advanced' | 'fast' | 'ultra-fast'
   /** Topic sent as Tavily's `topic`. */
   topic?: 'general' | 'news' | 'finance'
   /** Recency window in days (news/finance topics). */
   days?: number
   /** Whether to request Tavily's generated answer. */
-  includeAnswer?: boolean
+  includeAnswer?: boolean | 'basic' | 'advanced'
   /** Whether to request Tavily raw page content. */
-  includeRawContent?: boolean
+  includeRawContent?: boolean | 'markdown' | 'text'
   /** Request timeout in milliseconds. */
   timeout?: number
+  /** Snippet chunks per source (1–3). */
+  chunksPerSource?: number
+  /** Recency preset (news/finance topics). */
+  timeRange?: 'day' | 'week' | 'month' | 'year' | 'd' | 'w' | 'm' | 'y'
+  /** Include only results after this YYYY-MM-DD. */
+  startDate?: string
+  /** Include only results before this YYYY-MM-DD. */
+  endDate?: string
+  /** Collect query-related and per-source images. */
+  includeImages?: boolean
+  /** With includeImages, add a description per image. */
+  includeImageDescriptions?: boolean
+  /** Include the favicon URL for each result. */
+  includeFavicon?: boolean
+  /** Only include these domains. */
+  includeDomains?: string[]
+  /** Exclude these domains. */
+  excludeDomains?: string[]
+  /** Boost results from one country (general topic). */
+  country?: string
   /** Default result count when a request carries no `maxResults`. */
   maxResults?: number
   /** Search composition mode used by the Tavily provider. */
@@ -102,6 +122,26 @@ export interface TavilyCardState extends CardShell {
   includeAnswer: CardFieldState
   /** Whether to include raw page content. */
   includeRawContent: CardFieldState
+  /** Snippet chunks per source. */
+  chunksPerSource: CardFieldState
+  /** Recency preset. */
+  timeRange: CardFieldState
+  /** Start date (YYYY-MM-DD). */
+  startDate: CardFieldState
+  /** End date (YYYY-MM-DD). */
+  endDate: CardFieldState
+  /** Collect images. */
+  includeImages: CardFieldState
+  /** Image descriptions. */
+  includeImageDescriptions: CardFieldState
+  /** Include favicon. */
+  includeFavicon: CardFieldState
+  /** Include-only domains. */
+  includeDomains: CardFieldState
+  /** Exclude domains. */
+  excludeDomains: CardFieldState
+  /** Country boost. */
+  country: CardFieldState
   /** Request timeout in milliseconds. */
   timeout: CardFieldState
   /** Search composition mode. */
@@ -145,13 +185,23 @@ export class TavilyCardController {
       scope,
       [
         textField('baseURL'),
-        selectField('searchDepth', ['basic', 'advanced']),
+        selectField('searchDepth', ['basic', 'advanced', 'fast', 'ultra-fast']),
         selectField('topic', ['general', 'news', 'finance']),
         numberField('maxResults', { min: 1, max: 20, integer: true, aliases: ['numResults'] }),
         numberField('days', { min: 1, integer: true }),
-        booleanField('includeAnswer', true),
-        booleanField('includeRawContent', false),
+        valueSelectField('includeAnswer', ['basic', 'advanced']),
+        valueSelectField('includeRawContent', ['markdown', 'text']),
         numberField('timeout', { min: 1000, integer: true }),
+        numberField('chunksPerSource', { min: 1, max: 3, integer: true }),
+        selectField('timeRange', ['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y']),
+        textField('startDate'),
+        textField('endDate'),
+        booleanField('includeImages', false),
+        booleanField('includeImageDescriptions', false),
+        booleanField('includeFavicon', false),
+        listField('includeDomains'),
+        listField('excludeDomains'),
+        textField('country'),
         selectField('searchMode', ['tavily-only', 'deepseek-first']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
@@ -171,6 +221,16 @@ export class TavilyCardController {
       days: this.form.field('days'),
       includeAnswer: this.form.field('includeAnswer'),
       includeRawContent: this.form.field('includeRawContent'),
+      chunksPerSource: this.form.field('chunksPerSource'),
+      timeRange: this.form.field('timeRange'),
+      startDate: this.form.field('startDate'),
+      endDate: this.form.field('endDate'),
+      includeImages: this.form.field('includeImages'),
+      includeImageDescriptions: this.form.field('includeImageDescriptions'),
+      includeFavicon: this.form.field('includeFavicon'),
+      includeDomains: this.form.field('includeDomains'),
+      excludeDomains: this.form.field('excludeDomains'),
+      country: this.form.field('country'),
       timeout: this.form.field('timeout'),
       searchMode: this.form.field('searchMode'),
       apiKey: this.form.field(API_KEY_FIELD),

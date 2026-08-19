@@ -233,6 +233,49 @@ export function booleanField(field: string, fallback: boolean): CardFieldSpec {
 }
 
 /**
+ * A multi-value string field (e.g. domain lists) rendered as one comma- or
+ * whitespace-separated text input. The stored value is a `string[]`; an empty
+ * draft clears the field so it re-inherits the code default.
+ * @param field - field name inside the namespace section.
+ * @returns the field's conversion spec.
+ */
+export function listField(field: string): CardFieldSpec {
+  return {
+    field,
+    format: value => Array.isArray(value) ? value.join(', ') : '',
+    parse: (text) => {
+      const tokens = text.split(/[\s,]+/u).map(token => token.trim()).filter(Boolean)
+      return tokens.length === 0 ? { kind: 'clear' } : { kind: 'set', value: tokens }
+    },
+  }
+}
+
+/**
+ * A field that accepts a boolean OR a fixed set of strings, rendered as a
+ * select. `false`/`true` store booleans; any other accepted token stores its
+ * string value (e.g. `advanced`, `markdown`). An empty selection clears the
+ * field so it re-inherits the code default.
+ * @param field - field name inside the namespace section.
+ * @param tokens - the non-boolean string values the schema also accepts.
+ * @returns the field's conversion spec.
+ */
+export function valueSelectField(field: string, tokens: readonly string[]): CardFieldSpec {
+  return {
+    field,
+    format: value => {
+      if (typeof value === 'boolean') return value ? 'true' : 'false'
+      return typeof value === 'string' && tokens.includes(value) ? value : ''
+    },
+    parse: (text) => {
+      if (text === '') return { kind: 'clear' }
+      if (text === 'false') return { kind: 'set', value: false }
+      if (text === 'true') return { kind: 'set', value: true }
+      return tokens.includes(text) ? { kind: 'set', value: text } : undefined
+    },
+  }
+}
+
+/**
  * Stages one card's edits over one settings namespace and writes them on save.
  *
  * The form publishes through a snapshot store because slot components read
