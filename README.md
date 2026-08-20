@@ -8,7 +8,9 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 
 ## Features
 
-- **Drop-in search backend**: select `tavily` and the built-in `web_search` tool (plus the agent's own search) is answered by Tavily — no model-facing changes.
+- **Install-and-use (no manual config)**: installing this plugin **auto-selects Tavily as the `web_search` provider** via its `cordis.patch.yml`. Paste a key in the card and search — no yaml or `DSH_WEB_SEARCH_PROVIDER` edits required.
+- **Tavily/DeepSeek engine switch**: a GUI switch answers `web_search` with Tavily (default; keyless if no key) or falls back to the **official DeepSeek** provider — no uninstall needed. This is a real provider-switch UI, not a config file edit.
+- **Server-side connectivity probe**: `POST /api/tavily-probe` lets the card test a **stored** key (browsers cannot read stored secrets), using keyless mode when none is set.
 - **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth` (basic/advanced/fast/ultra-fast), `topic`, `includeAnswer`, `includeRawContent`, `timeout`, `searchMode`, `days`, `chunksPerSource`, `timeRange`, `startDate`/`endDate`, `includeImages`, `includeDomains`/`excludeDomains`, and `country` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
 - **Configuration-first priority**: `cordis.patch.yml` > WebUI > code defaults. Any field explicitly set in the yaml is shown disabled on the card with a "covered by config file" badge, so a stale UI value can never shadow a developer's pinned config.
 - **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
@@ -34,23 +36,20 @@ The plugin registers the provider and its card only — it does **not** override
 
 ## Enable
 
-1. **Select the provider.** Either set the environment variable:
+1. **Install & restart dsh.** The plugin's `cordis.patch.yml` already sets `web.config.searchProvider: tavily`, so Tavily is elected automatically — **no manual provider selection needed**.
 
-   ```sh
-   export DSH_WEB_SEARCH_PROVIDER=tavily
-   ```
+2. **Set the Tavily API key** (optional). Open `设置 → 插件 → 网页搜索`, expand the **Web search (Tavily)** card, and paste the key into the **API key** field. Without a key Tavily runs **keyless** (free, rate-limited); with a key it uses your account tier. Choose the **Web search engine** switch: `tavily` (default) or `official DeepSeek`.
 
-   or add a row to your profile's `cordis.patch.yml` (`~/.dsh/profiles/web/cordis.patch.yml`):
+3. Use `web_search` as usual. The model-facing tool is unchanged; only the backend answering it is now Tavily (or DeepSeek, if you switched).
 
-   ```yaml
-   - id: web
-     config:
-       searchProvider: tavily
-   ```
+> If you ever override the provider in yaml by hand, this is the row:
 
-2. **Set the Tavily API key.** Open `设置 → 插件 → 网页搜索`, expand the **Web search (Tavily)** card, and paste the key into the **API key** field. The card shows whether a key is configured. Without a key the provider reports itself unavailable, so searches fail loudly with `WEB_PROVIDER_CREDENTIAL_MISSING` instead of silently returning nothing.
-
-3. **Restart dsh** and use `web_search` as usual. The model-facing tool is unchanged; only the backend answering it is now Tavily.
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: web
+  config:
+    searchProvider: tavily
+```
 
 ### Enable the fetch (Extract) provider (optional)
 
@@ -82,29 +81,23 @@ The `web_search` tool's output schema is provider-agnostic — the model never s
 
 ### Troubleshooting: "I still get a DeepSeek API key error"
 
-> **`searchMode` ≠ provider selection.** `searchMode: tavily-only` only tells Tavily, **once it is selected**, not to merge DeepSeek results. It does **not** make `web_search` use Tavily.
+This plugin now **auto-selects Tavily** (`web.searchProvider: tavily`), so a fresh install answers `web_search` with Tavily — no such error in normal use. If you still see a DeepSeek key error:
 
-If `web_search` still reports `DeepSeek search has no API key for "DEEPSEEK_API_KEY"…`, the harness is routing `web_search` to the **built-in DeepSeek provider**, not to this plugin. That routing is decided by the `web` seam's `searchProvider` (or `DSH_WEB_SEARCH_PROVIDER`), which is separate from this plugin's `searchMode`. Fix it by actually selecting Tavily:
+- **You switched the engine to `official DeepSeek`** without a DeepSeek key. Switch the card's **Web search engine** back to `tavily` (or configure a DeepSeek key).
+- **You overrode the provider in yaml.** Make sure no later `web` patch row points `searchProvider` at `deepseek` (the plugin's own row elects `tavily`).
+- **It is an agent/assistant harness.** A chat app's own `web_search` is a different `web` seam that has not installed this plugin — it always uses the default DeepSeek backend and is unrelated to your Tavily install.
 
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- id: web
-  config:
-    searchProvider: tavily
-```
-
-…or `export DSH_WEB_SEARCH_PROVIDER=tavily`, then restart **dsh**. After that, `web_search` is answered by Tavily and DeepSeek is never consulted in `tavily-only` mode. The plugin logs a startup warning (and the card shows a wiring note) when the active provider is not Tavily.
-
-> If you see this error in an **agent/assistant harness** (e.g. a chat app's own `web_search`), that is a different `web` seam which has not installed this plugin — it always uses the default DeepSeek backend and is unrelated to your Tavily install.
+> `searchMode` (`tavily-only` / `deepseek-first` / `tavily-first`) only controls how Tavily **merges** DeepSeek once Tavily is selected — it is not the engine switch. Use the `engine` field / card switch to pick Tavily vs official DeepSeek.
 
 ## 🖥️ GUI usage (recommended for most users)
 
 Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)** card.
 
 - **Basic area (always visible)**:
+  - **Web search engine** — `Tavily` (default; keyless if no key) or `official DeepSeek`. This is the real provider switch; the plugin is already elected as the provider.
   - **API key** — paste your Tavily key. It is stored through the credentials service, never in a settings file.
   - **API Base URL** — leave blank for `https://api.tavily.com`, or set a proxy/endpoint base.
-  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first`: run DeepSeek search first, then merge its results with Tavily. Both modes require the web config to select `searchProvider: tavily`.
+  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first` / `tavily-first`: merge DeepSeek with Tavily as a secondary. Orthogonal to the engine switch.
   - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
   - **Estimated cost** — a live line shows the estimated credits and rough token count for the current depth/result/chunk settings.
   - **Check usage** — reads Tavily `GET /usage` with the currently entered key and shows the remaining credits, search usage, and plan. Stored keys must be re-entered once, like the connectivity test.
@@ -207,7 +200,7 @@ node scripts/patch-apiproxy.mjs            # patch every installed profile copy
 node scripts/patch-apiproxy.mjs --profile web   # patch one profile
 ```
 
-> **Server-side test of a stored key.** The card's `Test API connection` / `Check usage` buttons reach Tavily directly from the browser, which by design cannot read back a stored secret — so an already-configured key must be re-entered once to test it. As of rc.6 the harness exposes no plugin-defined remote route for a clickable server-side test, so the host-side `TavilySearchProvider.connectivityTest()` / `usage()` methods (which run where the stored key is available) are the server-side path for programmatic use.
+> **Server-side test of a stored key.** This plugin registers a host probe `POST /api/tavily-probe` that can test Tavily with a **stored** key server-side (keyless when none is set); `TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` are the programmatic host-side paths. The browser cannot read stored secrets back, so the card's `Test API connection` button still requires re-entering an already-configured key.
 
 ## Mapping
 

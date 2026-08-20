@@ -18,6 +18,7 @@ export type TavilyCardLocaleKey =
   | 'tavilyDays' | 'tavilyDaysHint'
   | 'tavilySearchMode' | 'tavilySearchModeHint'
   | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst' | 'searchModeTavilyFirst'
+  | 'tavilyEngine' | 'tavilyEngineHint' | 'engineTavily' | 'engineDeepseek'
   | 'wiringTitle' | 'wiringHint'
   | 'advancedTitle'
   | 'searchDepthBasic' | 'searchDepthAdvanced' | 'searchDepthFast' | 'searchDepthUltraFast'
@@ -78,8 +79,12 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   searchModeTavilyOnly: 'Tavily only (skip DeepSeek)',
   searchModeDeepseekFirst: 'DeepSeek first, then Tavily (combined)',
   searchModeTavilyFirst: 'Tavily first, then DeepSeek (combined)',
-  wiringTitle: 'Verify provider wiring: this is NOT enough on its own',
-  wiringHint: 'Search mode only decides how Tavily merges DeepSeek once Tavily is selected. It does NOT make web_search use Tavily — without the snippet below, web_search keeps answering through the built-in DeepSeek provider (that is where a confusing “no DeepSeek API key” error comes from).',
+  tavilyEngine: 'Web search engine',
+  tavilyEngineHint: 'Which provider answers web_search. Tavily (default): this plugin, keyless if no key. DeepSeek: the official DeepSeek search — switch back without uninstalling. This plugin is already elected as the web_search provider, so this toggle actually changes the engine (no manual yaml needed).',
+  engineTavily: 'Tavily (default)',
+  engineDeepseek: 'Official DeepSeek',
+  wiringTitle: 'Tavily is already selected as the web_search provider',
+  wiringHint: 'Installing this plugin elects Tavily automatically (web.searchProvider: tavily), so web_search answers through Tavily out of the box. The “Web search engine” switch above then picks Tavily or the official DeepSeek provider. The snippet below is optional — only needed if you later override the provider in yaml by hand.',
   tavilyRetryMaxAttempts: 'Rate-limit retries',
   tavilyRetryMaxAttemptsHint: 'Extra attempts after a 429 response (0–5); waits honor retry-after with a bounded backoff.',
   tavilyCacheTtl: 'Cache TTL (seconds)',
@@ -180,8 +185,12 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   searchModeTavilyOnly: '直接使用 Tavily（跳过 DeepSeek）',
   searchModeDeepseekFirst: '先 DeepSeek，再 Tavily（综合结果）',
   searchModeTavilyFirst: '先 Tavily，再 DeepSeek（综合结果）',
-  wiringTitle: '请确认提供方接线：仅此页设置还不够',
-  wiringHint: '搜索模式只决定 Tavily 被选中后如何合并 DeepSeek，并不会让 web_search 使用 Tavily。若不设置下方片段，web_search 仍会由内置 DeepSeek 提供方应答——那正是“没有 DeepSeek API key”报错的来源。',
+  tavilyEngine: '网页搜索引擎',
+  tavilyEngineHint: '决定 web_search 由谁应答。Tavily（默认）：本插件，无 Key 走 keyless；DeepSeek：官方 DeepSeek——无需卸载即可切回。本插件已被自动选为 web_search 提供方，因此该开关真正切换引擎（不需要手动改 yaml）。',
+  engineTavily: 'Tavily（默认）',
+  engineDeepseek: '官方 DeepSeek',
+  wiringTitle: 'Tavily 已被自动选为 web_search 提供方',
+  wiringHint: '安装本插件会自动选举 Tavily（web.searchProvider: tavily），因此 web_search 开箱即用 Tavily。上方「网页搜索引擎」开关可切换 Tavily 或官方 DeepSeek。下方片段为可选——仅在日后想手动在 yaml 覆盖提供方时使用。',
   tavilyRetryMaxAttempts: '限流重试次数',
   tavilyRetryMaxAttemptsHint: '收到 429 后的额外重试次数（0–5）；等待会遵循 retry-after 并做有界退避。',
   tavilyCacheTtl: '缓存时长（秒）',

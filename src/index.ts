@@ -20,6 +20,9 @@ import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '@deepseek-ai/dsh-web'
+// Type-only: pulls the ctx.webServer Context merge so the probe route is typed.
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   TavilySearchProvider,
   TavilyExtractProvider,
@@ -59,8 +62,8 @@ export type { TavilyUsage } from './types'
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'web-search-tavily'
 
-/** The web seam this provider registers into. */
-export const inject = ['web']
+/** The seams this plugin registers into: web providers + an HTTP probe route. */
+export const inject = ['web', 'webServer']
 
 /**
  * Plugin config (all optional — `apply` fills env-var and constant defaults).
@@ -129,6 +132,13 @@ export interface Config {
    * Defaults to `tavily-only`.
    */
   searchMode?: 'tavily-only' | 'deepseek-first' | 'tavily-first'
+  /**
+   * Which engine answers `web_search`. `tavily` (default): this provider; if a
+   * key is set, Tavily with that key, else keyless. `deepseek`: the official
+   * DeepSeek search (useful to switch back without uninstalling). This is the
+   * card's Tavily/DeepSeek switch.
+   */
+  engine?: 'tavily' | 'deepseek'
 }
 
 export const Config: z<Config> = z.object({
@@ -156,6 +166,7 @@ export const Config: z<Config> = z.object({
   cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
   searchMode: z.union(['tavily-only', 'deepseek-first', 'tavily-first'] as const).description('Search composition: Tavily-only, DeepSeek-first, or Tavily-first with merge.'),
+  engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
 })
 
 /** Settings namespace carrying this provider's endpoint, depth, topic, and key reference. */
@@ -192,6 +203,9 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
       const ambient = process.env[apiKeyEnv]
       return ambient !== undefined && ambient.length > 0 ? ambient : undefined
     },
+    // The card's Tavily/DeepSeek switch travels as a normal, readable settings
+    // field (`engine`), so the provider just derives it per op.
+    resolveEnabled: async () => (effective.engine ?? 'tavily') === 'tavily',
     apiKeyEnv,
     baseURL: effective.baseURL ?? TAVILY_DEFAULT_BASE_URL,
     searchDepth: effective.searchDepth ?? TAVILY_DEFAULT_SEARCH_DEPTH,
@@ -278,19 +292,84 @@ export function apply(ctx: Context, config: Config): void {
     // section per search, so a committed change needs no re-registration.
     onChange: () => {},
   })
-  ctx.web.registerSearchProvider(
-    new TavilySearchProvider(
-      () => resolveOptions(ctx, current(), entry),
-      // Re-evaluate per search so a UI/config switch takes effect live.
-      () => hybridFor(ctx, current),
-    ),
+  const provider = new TavilySearchProvider(
+    () => resolveOptions(ctx, current(), entry),
+    // Re-evaluate per search so a UI/config switch takes effect live.
+    () => hybridFor(ctx, current),
+    // When the card's switch is off, answer through the official DeepSeek
+    // provider (the one registered by dsh-web-search-deepseek).
+    () => hybridDeepSeekSearch(ctx),
   )
+  ctx.web.registerSearchProvider(provider)
   // Dual-half: also register a Tavily Extract-backed fetch provider. Selecting
   // it is opt-in via `fetchProvider: tavily-extract` (or DSH_WEB_FETCH_PROVIDER).
   ctx.web.registerFetchProvider(
     new TavilyExtractProvider(() => resolveOptions(ctx, current(), entry)),
   )
+  // Server-side probe so the card can test a stored key (browsers cannot read
+  // stored secrets back). POST /api/tavily-probe { apiKey?, clearKey? }.
+  ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/tavily-probe',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, code: 'other', error: 'method not allowed' })
+        return
+      }
+      try {
+        const body = await readJsonBody(req)
+        const draft = typeof body.apiKey === 'string' ? body.apiKey : undefined
+        const clearKey = body.clearKey === true
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(await provider.probe(draft, clearKey)))
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        if (detail === 'invalid JSON body' || detail === 'body too large') {
+          sendJson(res, 400, { ok: false, code: 'other', error: detail })
+          return
+        }
+        sendJson(res, 200, { ok: false, code: 'other', error: detail })
+      }
+    },
+  })
   warnIfNotActiveSearchProvider(ctx)
+}
+
+/** Serialize a JSON response. */
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+  res.end(JSON.stringify(payload))
+}
+
+/** Read and parse a small JSON request body. */
+function readJsonBody(req: IncomingMessage, limit = 4096): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > limit) {
+        reject(new Error('body too large'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim()
+      if (text === '') {
+        resolve({})
+        return
+      }
+      try {
+        const json = JSON.parse(text)
+        resolve(json !== null && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : {})
+      } catch {
+        reject(new Error('invalid JSON body'))
+      }
+    })
+    req.on('error', reject)
+  })
 }
 
 /**

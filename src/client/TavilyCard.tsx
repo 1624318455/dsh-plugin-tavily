@@ -118,6 +118,24 @@ export function TavilyCard(props: TavilyCardProps) {
         onEdit={(text) => { props.edit('searchMode', text) }}
         onReset={() => { props.resetField('searchMode') }}
       />
+      <SelectField
+        id="plugin-config-tavily-engine"
+        label={t('tavilyEngine')}
+        hint={t('tavilyEngineHint')}
+        overriddenLabel={t('overridden')}
+        configCoveredLabel={t('configCovered')}
+        resetLabel={t('reset')}
+        invalidLabel={t('invalidNumber')}
+        placeholder="tavily"
+        disabled={disabled}
+        {...state.engine}
+        options={[
+          { value: 'tavily', label: t('engineTavily') },
+          { value: 'deepseek', label: t('engineDeepseek') },
+        ]}
+        onEdit={(text) => { props.edit('engine', text) }}
+        onReset={() => { props.resetField('engine') }}
+      />
 
       <div className="dsh-tavily-test-area">
         <button

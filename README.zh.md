@@ -8,7 +8,9 @@
 
 ## 功能
 
-- **即插即用的搜索后端**：选中 `tavily` 后，内置 `web_search` 工具（以及 agent 自身的搜索）都由 Tavily 应答——面向模型的接口不变。
+- **即装即用（无需手动配提供方）**：安装本插件即通过其 `cordis.patch.yml` **自动把 `web_search` 提供方选为 Tavily**。卡片里粘一个 Key 就能搜，无需改 yaml 或设 `DSH_WEB_SEARCH_PROVIDER`。
+- **Tavily/DeepSeek 引擎开关**：GUI 开关让 `web_search` 由 Tavily（默认；无 Key 走 keyless）应答，或回退到**官方 DeepSeek**——无需卸载。这是真正切换提供方的开关，不是改配置。
+- **服务端连通探针**：`POST /api/tavily-probe` 让卡片能测试**已保存的 Key**（浏览器读不回已存密钥），无 Key 时走 keyless。
 - **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`（basic/advanced/fast/ultra-fast）、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`searchMode`、`days`、`chunksPerSource`、`timeRange`、`startDate`/`endDate`、`includeImages`、`includeDomains`/`excludeDomains`、`country` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
 - **配置文件优先**：`cordis.patch.yml` > WebUI > 代码默认值。yaml 显式设置的字段在卡片上置灰并显示「该参数已被配置文件覆盖」，WebUI 无法覆盖。
 - **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
@@ -30,27 +32,24 @@ dsh plugin --profile web add "github:1624318455/dsh-plugin-tavily#main"
 dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
 ```
 
-插件**只注册提供方和设置卡片**，不会覆盖 profile 已选的搜索提供方。
+插件的 `cordis.patch.yml` 会把 `web.config.searchProvider` 设为 `tavily`，即**自动选 Tavily 为提供方**（无需手动改配置）。
 
 ## 启用
 
-1. **选择提供方**。二选一：设置环境变量
+1. **安装并重启 dsh**。插件已替你设置 `web.config.searchProvider: tavily`，无需手动选择提供方。
 
-   ```sh
-   export DSH_WEB_SEARCH_PROVIDER=tavily
-   ```
+2. **设置 Tavily API key**（可选）。打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片，把密钥粘贴进 **API Key** 输入框。没有 Key 时 Tavily 走 **keyless**（免费、限流），有 Key 走账号档。在 **网页搜索引擎** 开关里选 `Tavily`（默认）或 `官方 DeepSeek`。
 
-   或在 profile 的 `cordis.patch.yml`（`~/.dsh/profiles/web/cordis.patch.yml`）中加一行：
+3. 照常使用 `web_search`。面向模型的工具不变，只是后端换成 Tavily（或你切到的 DeepSeek）。
 
-   ```yaml
-   - id: web
-     config:
-       searchProvider: tavily
-   ```
+> 若日后你想在 yaml 里手动覆盖提供方，对应行是：
 
-2. **设置 Tavily API key**。打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片，把密钥粘贴进 **API Key** 输入框。卡片会显示是否已配置。没有密钥时提供方自报不可用，搜索会以 `WEB_PROVIDER_CREDENTIAL_MISSING` 明确失败，而不是静默返回空结果。
-
-3. **重启 dsh**，照常使用 `web_search`。面向模型的工具不变，只有背后的搜索后端换成 Tavily。
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: web
+  config:
+    searchProvider: tavily
+```
 
 ### 启用抓取（Extract）提供方（可选）
 
@@ -82,29 +81,23 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
 
 ### 故障排查：仍然看到「没有 DeepSeek API key」报错
 
-> **`searchMode` ≠ 提供方选择。** `searchMode: tavily-only` 只表示「Tavily 被选中后不去合并 DeepSeek」，它**不会**让 `web_search` 使用 Tavily。
+本插件现已**自动选 Tavily**（`web.searchProvider: tavily`），新装即由 Tavily 应答 `web_search`，正常使用不该再出现此错。若仍看到 DeepSeek key 报错：
 
-如果 `web_search` 仍报 `DeepSeek search has no API key for "DEEPSEEK_API_KEY"…`，说明 harness 把 `web_search` 路由到了**内置 DeepSeek 提供方**，而不是本插件的 Tavily。路由由 `web` seam 的 `searchProvider`（或 `DSH_WEB_SEARCH_PROVIDER`）决定，与本插件的 `searchMode` 是两回事。真正选中 Tavily 即可修复：
+- **你把引擎切到了「官方 DeepSeek」却没配 DeepSeek key**。把卡片的「网页搜索引擎」切回 `Tavily`（或配置 DeepSeek key）。
+- **你在 yaml 里覆盖了提供方**。确保没有更靠后的 `web` patch 行把 `searchProvider` 指回 `deepseek`（插件自己的行已选 `tavily`）。
+- **这是 agent/assistant 环境**。聊天应用自己的 `web_search` 是另一套 `web` seam、并未安装本插件——它始终用默认 DeepSeek 后端，与你的 Tavily 安装无关。
 
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- id: web
-  config:
-    searchProvider: tavily
-```
-
-…或 `export DSH_WEB_SEARCH_PROVIDER=tavily` 后重启 **dsh**。此后 `web_search` 由 Tavily 应答，`tavily-only` 模式下不会再调 DeepSeek。当当前提供方不是 Tavily 时，插件会打印启动告警，卡片也会显示接线提示。
-
-> 若这是在**agent/assistant 环境**（如某聊天应用的 `web_search`）里看到的，那是另一套 `web` seam、并未安装本插件——它始终用默认 DeepSeek 后端，与你的 Tavily 安装无关。
+> `searchMode`（`tavily-only` / `deepseek-first` / `tavily-first`）只控制 Tavily 被选中后**如何合并** DeepSeek，不是引擎开关。切换 Tavily 与官方 DeepSeek 请用 `engine` 字段 / 卡片开关。
 
 ## 🖥️ 图形界面使用（推荐普通用户）
 
 打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片。
 
 - **基础设置（默认展开）**：
+  - **网页搜索引擎** —— `Tavily`（默认；无 Key 走 keyless）或 `官方 DeepSeek`。这是真正的提供方开关；插件已被自动选为提供方。
   - **API Key** —— 粘贴你的 Tavily 密钥。密钥经凭据服务写入，绝不进入设置文件。
   - **API Base URL** —— 留空使用 `https://api.tavily.com`；可填代理/自定义接口地址。
-  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`：先走 DeepSeek，再合并 Tavily 结果。两种模式都需要在 web 配置中选择 `searchProvider: tavily`。
+  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`/`tavily-first`：把 DeepSeek 作为次级结果合并。与引擎开关正交。
   - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
   - **预估成本** —— 实时显示当前深度/结果数/片段数对应的预估积分与大致 token 量。
   - **检查用量** —— 用当前输入的 key 读取 Tavily `GET /usage`，展示剩余额度、搜索用量与套餐；已保存的密钥与测试一样需重新输入一次。
@@ -207,7 +200,7 @@ node scripts/patch-apiproxy.mjs                    # 修补所有已安装 profi
 node scripts/patch-apiproxy.mjs --profile web      # 只修补指定 profile
 ```
 
-> **已保存密钥的服务端测试**：卡片的「测试API连接」/「检查用量」由浏览器直连 Tavily，出于安全设计无法读回已存密钥，因此测试已配置密钥需重新输入一次。截至 rc.6，harness 未提供插件的自定义远程路由来实现「一键服务端测试」，故宿主侧 `TavilySearchProvider.connectivityTest()` / `usage()`（在可访问已存密钥处运行）是编程使用的服务端路径。
+> **已保存密钥的服务端测试**：本插件注册了宿主侧探针 `POST /api/tavily-probe`，可在服务端用已存 Key 测试 Tavily 连通性（无 Key 走 keyless）；`TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` 也提供了编程用的服务端路径。浏览器侧因安全设计读不回已存密钥，故「测试API连接」按钮仍要求已配置密钥时重输一次。
 
 ## 映射
 

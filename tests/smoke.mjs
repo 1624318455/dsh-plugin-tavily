@@ -23,6 +23,7 @@ if (apiKey === undefined || apiKey.length === 0) {
 // when the service never mounts).
 const registered = []
 const fetched = []
+const routes = []
 const ctx = {
   web: {
     registerSearchProvider(provider) {
@@ -34,6 +35,13 @@ const ctx = {
       return () => {}
     },
   },
+  webServer: {
+    register(route) {
+      routes.push(route)
+      return () => {}
+    },
+  },
+  logger: () => ({ warn: () => {}, info: () => {}, error: () => {}, debug: () => {} }),
   inject: () => () => {},
   get: () => undefined,
 }

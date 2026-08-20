@@ -94,6 +94,12 @@ export interface TavilySearchProviderOptions {
   apiKey?: string
   /** Resolve the operation's key; returned when the literal is absent. */
   resolveApiKey?: () => Promise<string | undefined>
+  /**
+   * Resolve whether the card's Tavily/DeepSeek switch is on. Defaults to `true`
+   * (Tavily) when absent; `false` makes this provider delegate to the official
+   * DeepSeek search instead.
+   */
+  resolveEnabled?: () => Promise<boolean>
   /** Credential reference named in diagnostics; defaults to `TAVILY_API_KEY`. */
   apiKeyEnv?: string
   /** Endpoint base; `/search` is appended. */
@@ -236,10 +242,14 @@ export class TavilySearchProvider implements WebSearchProvider {
    * @param hybridSearch - thunk returning the active hybrid composition when
    *   the current search mode calls for one. Re-evaluated per op so a settings
    *   edit can switch modes live.
+   * @param deepseekDelegate - thunk returning the official DeepSeek search to
+   *   answer when the card's Tavily/DeepSeek switch is off. Evaluated per op, so
+   *   switching engines takes effect live.
    */
   constructor(
     private readonly resolveOptions: () => TavilySearchProviderOptions,
     private readonly hybridSearch?: HybridSearchBuilder,
+    private readonly deepseekDelegate?: () => HybridSearch | undefined,
   ) {}
 
   available(): boolean {
@@ -257,6 +267,26 @@ export class TavilySearchProvider implements WebSearchProvider {
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     const options = this.resolveOptions()
+    // The card's Tavily/DeepSeek switch: when off, this provider answers through
+    // the official DeepSeek search (so switching engines needs no provider
+    // re-selection). On by default — a Tavily plugin should search Tavily out of
+    // the box, keyless if no key is set.
+    const enabled = await (options.resolveEnabled?.() ?? Promise.resolve(true))
+    if (!enabled) {
+      const deepseek = this.deepseekDelegate?.()
+      if (deepseek === undefined) {
+        throw new WebError(
+          'Tavily is switched to the official DeepSeek provider, but no DeepSeek search is available;'
+          + ' configure a DeepSeek key or switch back to Tavily',
+          'WEB_PROVIDER_ERROR',
+        )
+      }
+      const delegated = await deepseek(request, signal)
+      if (delegated === undefined) {
+        throw new WebError('official DeepSeek search returned no result', 'WEB_PROVIDER_ERROR')
+      }
+      return delegated
+    }
     // Hybrid modes run the secondary provider alongside Tavily and merge the
     // results. A failing/absent secondary provider never blocks Tavily.
     const hybrid = this.hybridSearch?.()
@@ -370,6 +400,77 @@ export class TavilySearchProvider implements WebSearchProvider {
       throw new WebError(message, 'WEB_PROVIDER_ERROR')
     }
     return true
+  }
+
+  /**
+   * Probe Tavily connectivity for the card's server route. Unlike the browser
+   * test (which cannot read a stored key), this runs host-side so it can test a
+   * stored key; otherwise it falls back to the currently staged draft, and then
+   * to keyless. Returns a structured outcome rather than throwing, so the HTTP
+   * route can serialize it directly.
+   * @param draft - a staged API key (optional; wins over the stored key).
+   * @param clearKey - when true, ignore both the draft and any stored key.
+   * @returns `{ ok, mode, code?, error? }`.
+   */
+  async probe(
+    draft?: string,
+    clearKey = false,
+  ): Promise<{ ok: boolean; mode: 'key' | 'keyless'; code?: string; error?: string }> {
+    const options = this.resolveOptions()
+    let apiKey = draft?.trim() ?? ''
+    if (apiKey === '' && !clearKey) {
+      try {
+        apiKey = await resolveRequestApiKey(options)
+      } catch (_resolveFailure) {
+        apiKey = ''
+      }
+    }
+    const mode: 'key' | 'keyless' = apiKey.length > 0 ? 'key' : 'keyless'
+    try {
+      const { signal: requestSignal, timeoutSignal } = makeRequestSignal(undefined, options.timeout)
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'accept': 'application/json',
+        'user-agent': USER_AGENT,
+      }
+      let response: Response
+      try {
+        response = await fetch(`${options.baseURL}/search`, {
+          method: 'POST',
+          redirect: 'error',
+          headers: apiKey.length > 0
+            ? { ...headers, 'authorization': `Bearer ${apiKey}` }
+            : headers,
+          body: JSON.stringify({
+            query: 'tavily',
+            search_depth: 'basic',
+            topic: 'general',
+            include_answer: false,
+            max_results: 1,
+          }),
+          ...requestSignal !== undefined ? { signal: requestSignal } : {},
+        })
+      } catch (error: unknown) {
+        if (timeoutSignal?.aborted === true) {
+          return { ok: false, mode, code: 'timeout', error: `timed out after ${options.timeout}ms` }
+        }
+        return { ok: false, mode, code: 'network', error: String(error) }
+      }
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`
+        try {
+          const parsed = await response.json() as TavilyError
+          message = parsed.detail?.error ?? parsed.error ?? parsed.message ?? message
+        } catch (_bodyFailure) {
+          // keep status message
+        }
+        const code = response.status === 401 || response.status === 403 ? 'invalid_key' : 'http'
+        return { ok: false, mode, code, error: message }
+      }
+      return { ok: true, mode }
+    } catch (error: unknown) {
+      return { ok: false, mode, code: 'other', error: String(error) }
+    }
   }
 
   /** Best-effort secondary search: absence or failure degrades to Tavily only. */
