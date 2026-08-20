@@ -11,12 +11,11 @@
 - **即装即用（无需手动配提供方）**：安装本插件即通过其 `cordis.patch.yml` **自动把 `web_search` 提供方选为 Tavily**。卡片里粘一个 Key 就能搜，无需改 yaml 或设 `DSH_WEB_SEARCH_PROVIDER`。
 - **Tavily/DeepSeek 引擎开关**：GUI 开关让 `web_search` 由 Tavily（默认；无 Key 走 keyless）应答，或回退到**官方 DeepSeek**——无需卸载。这是真正切换提供方的开关，不是改配置。
 - **服务端连通探针**：`POST /api/tavily-probe` 让卡片能测试**已保存的 Key**（浏览器读不回已存密钥），无 Key 时走 keyless。
-- **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`（basic/advanced/fast/ultra-fast）、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`searchMode`、`days`、`chunksPerSource`、`timeRange`、`startDate`/`endDate`、`includeImages`、`includeDomains`/`excludeDomains`、`country` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
+- **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`（basic/advanced/fast/ultra-fast）、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`days`、`chunksPerSource`、`timeRange`、`startDate`/`endDate`、`includeImages`、`includeDomains`/`excludeDomains`、`country` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
 - **配置文件优先**：`cordis.patch.yml` > WebUI > 代码默认值。yaml 显式设置的字段在卡片上置灰并显示「该参数已被配置文件覆盖」，WebUI 无法覆盖。
 - **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
 - **用量与成本面板**：卡片实时显示当前设置的每次搜索积分/token 预估，并提供「检查用量」按钮读取 Tavily `GET /usage`（剩余额度、搜索用量、套餐）。提供方另有宿主侧 `usage()` 方法可在已存密钥可用时读取同一数据。
 - **页面抓取**：基于 Tavily Extract 的 fetch 提供方（`tavily-extract`）从 URL 读取整页内容并返回干净的 text/html —— 选择一次后，URL 检索即由 Tavily 应答。
-- **搜索模式**：可在卡片选择 `tavily-only`（直接走 Tavily，跳过 DeepSeek）、`deepseek-first`（先 DeepSeek 后 Tavily，综合结果）或 `tavily-first`（先 Tavily 后 DeepSeek，综合结果）。
 - **限流重试与缓存**：收到 429 后按 `retry-after` 做有界退避重试；可选 TTL 缓存让相同查询直接命中以节省额度。
 - **凭据优先的密钥解析**：每次搜索按 字面量 `apiKey` → 凭据服务（`apiKeyEnv`）→ `process.env[apiKeyEnv]` 的顺序解析。
 
@@ -87,8 +86,6 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
 - **你在 yaml 里覆盖了提供方**。确保没有更靠后的 `web` patch 行把 `searchProvider` 指回 `deepseek`（插件自己的行已选 `tavily`）。
 - **这是 agent/assistant 环境**。聊天应用自己的 `web_search` 是另一套 `web` seam、并未安装本插件——它始终用默认 DeepSeek 后端，与你的 Tavily 安装无关。
 
-> `searchMode`（`tavily-only` / `deepseek-first` / `tavily-first`）只控制 Tavily 被选中后**如何合并** DeepSeek，不是引擎开关。切换 Tavily 与官方 DeepSeek 请用 `engine` 字段 / 卡片开关。
-
 ## 🖥️ 图形界面使用（推荐普通用户）
 
 打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片。
@@ -97,7 +94,6 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
   - **网页搜索引擎** —— `Tavily`（默认；无 Key 走 keyless）或 `官方 DeepSeek`。这是真正的提供方开关；插件已被自动选为提供方。
   - **API Key** —— 粘贴你的 Tavily 密钥。密钥经凭据服务写入，绝不进入设置文件。
   - **API Base URL** —— 留空使用 `https://api.tavily.com`；可填代理/自定义接口地址。
-  - **搜索模式** —— `tavily-only`（默认）：直接走 Tavily，不查询 DeepSeek；`deepseek-first`/`tavily-first`：把 DeepSeek 作为次级结果合并。与引擎开关正交。
   - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
   - **预估成本** —— 实时显示当前深度/结果数/片段数对应的预估积分与大致 token 量。
   - **检查用量** —— 用当前输入的 key 读取 Tavily `GET /usage`，展示剩余额度、搜索用量与套餐；已保存的密钥与测试一样需重新输入一次。
@@ -135,7 +131,7 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
     maxResults: 8
     includeRawContent: false
     timeout: 20000
-    searchMode: deepseek-first
+    engine: tavily
 ```
 
 ### 优先级
@@ -163,7 +159,7 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `chunksPerSource` | `3` | 每个来源的片段数（1–3） | ✓ |
 | `timeRange` | （未设） | 时效预设：`day`/`week`/`month`/`year`/`d`/`w`/`m`/`y` | ✓ |
 | `timeout` | `30000` | 请求超时（毫秒） | ✓ |
-| `searchMode` | `tavily-only` | `tavily-only`、`deepseek-first` 或 `tavily-first` | ✓ |
+| `engine` | `tavily` | 应答 web_search 的引擎：`tavily`（无 Key 走 keyless）或 `deepseek` | ✓ |
 | `days` | （未设） | 时效窗口（天），用于 news/finance | ✓ |
 | `retryMaxAttempts` | `2` | 收到 429 后的额外重试（0–5） | ✓ |
 | `cacheTtlSeconds` | `0` | 查询缓存时长（秒），0 关闭 | ✓ |
@@ -211,7 +207,7 @@ Tavily 的扁平 `results[]` 映射为规范化的 `WebSearchSource`：`url` ←
 产品分析中确认的高置信后续项：
 
 - ✅ **用量/成本面板** —— 卡片展示 `GET /usage` + 实时积分/token 预估（已实现）。
-- ✅ **429 重试 + 短时缓存** —— `retry-after` 感知退避 + 可选 TTL 缓存，并新增 `tavily-first` 混合模式（已实现）。
+- ✅ **429 重试 + 短时缓存** —— `retry-after` 感知退避 + 可选 TTL 缓存（已实现）。
 - ✅ **Extract 提取能力** —— 已在现有 fetch seam 上注册基于 Tavily Extract 的 `WebFetchProvider`（已实现）。
 - ✅ **apiproxy 白名单摩擦** —— 提供幂等的 `scripts/patch-apiproxy.mjs`（已实现）。
 

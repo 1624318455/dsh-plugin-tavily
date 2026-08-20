@@ -16,8 +16,6 @@ export type TavilyCardLocaleKey =
   | 'tavilyIncludeRawContent' | 'tavilyIncludeRawContentHint'
   | 'tavilyTimeout' | 'tavilyTimeoutHint'
   | 'tavilyDays' | 'tavilyDaysHint'
-  | 'tavilySearchMode' | 'tavilySearchModeHint'
-  | 'searchModeTavilyOnly' | 'searchModeDeepseekFirst' | 'searchModeTavilyFirst'
   | 'tavilyEngine' | 'tavilyEngineHint' | 'engineTavily' | 'engineDeepseek'
   | 'wiringTitle' | 'wiringHint'
   | 'advancedTitle'
@@ -74,11 +72,6 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyTimeoutHint: 'Milliseconds before a search request is abandoned; blank uses 30000.',
   tavilyDays: 'Recency window (days)',
   tavilyDaysHint: 'Only results from the last N days; leave blank to disable.',
-  tavilySearchMode: 'Search mode',
-  tavilySearchModeHint: 'Only controls how Tavily merges DeepSeek AFTER being selected (deepseek-first/tavily-first); a missing DeepSeek key/provider degrades those to Tavily-only. Use the “Web search engine” switch to answer web_search with Tavily or official DeepSeek.',
-  searchModeTavilyOnly: 'Tavily only (skip DeepSeek)',
-  searchModeDeepseekFirst: 'DeepSeek first, then Tavily (combined)',
-  searchModeTavilyFirst: 'Tavily first, then DeepSeek (combined)',
   tavilyEngine: 'Web search engine',
   tavilyEngineHint: 'Which provider answers web_search. Tavily (default): this plugin, keyless if no key. DeepSeek: the official DeepSeek search — switch back without uninstalling. This plugin is already elected as the web_search provider, so this toggle actually changes the engine (no manual yaml needed).',
   engineTavily: 'Tavily (default)',
@@ -180,11 +173,6 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyTimeoutHint: '搜索请求超时毫秒数；留空使用 30000。',
   tavilyDays: '时间窗口（天）',
   tavilyDaysHint: '只返回最近 N 天的结果；留空表示不限制。',
-  tavilySearchMode: '搜索模式',
-  tavilySearchModeHint: '只控制 Tavily 被选中后如何合并 DeepSeek（deepseek-first/tavily-first）；DeepSeek 无 key/不可用时会优雅退化为 Tavily-only。切换 web_search 由 Tavily 还是官方 DeepSeek 应答，请用「网页搜索引擎」开关。',
-  searchModeTavilyOnly: '直接使用 Tavily（跳过 DeepSeek）',
-  searchModeDeepseekFirst: '先 DeepSeek，再 Tavily（综合结果）',
-  searchModeTavilyFirst: '先 Tavily，再 DeepSeek（综合结果）',
   tavilyEngine: '网页搜索引擎',
   tavilyEngineHint: '决定 web_search 由谁应答。Tavily（默认）：本插件，无 Key 走 keyless；DeepSeek：官方 DeepSeek——无需卸载即可切回。本插件已被自动选为 web_search 提供方，因此该开关真正切换引擎（不需要手动改 yaml）。',
   engineTavily: 'Tavily（默认）',

@@ -90,7 +90,6 @@ export interface TavilySettings {
   /** Query-cache TTL in seconds (0 disables). */
   cacheTtlSeconds?: number
   /** Search composition mode used by the Tavily provider. */
-  searchMode?: 'tavily-only' | 'deepseek-first' | 'tavily-first'
   /** Which engine answers web_search: 'tavily' (default) or 'deepseek'. */
   engine?: 'tavily' | 'deepseek'
 }
@@ -184,8 +183,6 @@ export interface TavilyCardState extends CardShell {
   cacheTtlSeconds: CardFieldState
   /** Request timeout in milliseconds. */
   timeout: CardFieldState
-  /** Search composition mode. */
-  searchMode: CardFieldState
   /** Engine switch (Tavily vs official DeepSeek). */
   engine: CardFieldState
   /** The staged credential, which starts blank on every load. */
@@ -253,7 +250,6 @@ export class TavilyCardController {
         textField('country'),
         numberField('retryMaxAttempts', { min: 0, max: 5, integer: true }),
         numberField('cacheTtlSeconds', { min: 0, max: 3600, integer: true }),
-        selectField('searchMode', ['tavily-only', 'deepseek-first', 'tavily-first']),
         selectField('engine', ['tavily', 'deepseek']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
@@ -286,7 +282,6 @@ export class TavilyCardController {
       retryMaxAttempts: this.form.field('retryMaxAttempts'),
       cacheTtlSeconds: this.form.field('cacheTtlSeconds'),
       timeout: this.form.field('timeout'),
-      searchMode: this.form.field('searchMode'),
       engine: this.form.field('engine'),
       apiKey: this.form.field(API_KEY_FIELD),
       apiKeyConfigured: this.credential.configured,

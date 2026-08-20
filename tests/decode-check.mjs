@@ -31,7 +31,6 @@ const Config = z.object({
   retryMaxAttempts: z.number().step(1).min(0).max(5),
   cacheTtlSeconds: z.number().step(1).min(0).max(3600),
   numResults: z.number().step(1).min(1).max(20),
-  searchMode: z.union(['tavily-only', 'deepseek-first', 'tavily-first']),
   engine: z.union(['tavily', 'deepseek']),
 })
 
@@ -76,12 +75,12 @@ const cases = [
     apiKeyEnv: 'TAVILY_API_KEY', baseURL: 'https://api.tavily.com',
     searchDepth: 'basic', topic: 'general', days: 7,
     includeAnswer: true, includeRawContent: false,
-    timeout: 30000, maxResults: 5, searchMode: 'tavily-only',
+    timeout: 30000, maxResults: 5, engine: 'tavily',
   }],
   ['user overrides', {
     apiKeyEnv: 'MY_KEY', baseURL: 'https://x', searchDepth: 'advanced',
     topic: 'news', days: 3, includeAnswer: false, includeRawContent: 'markdown',
-    timeout: 15000, maxResults: 10, searchMode: 'deepseek-first',
+    timeout: 15000, maxResults: 10, engine: 'deepseek',
   }],
   ['full new-parameter section', {
     searchDepth: 'ultra-fast', timeRange: 'w', startDate: '2025-01-01', endDate: '2025-02-01',
@@ -97,7 +96,6 @@ const cases = [
   ['engine deepseek valid', { engine: 'deepseek' }],
   ['invalid engine', { engine: 'exa' }],
   ['invalid timeRange', { timeRange: 'foo' }],
-  ['invalid searchMode', { searchMode: 'hybrid' }],
 ]
 for (const [label, value] of cases) {
   const failure = validateDraft(rehydrated, value)

@@ -11,12 +11,11 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 - **Install-and-use (no manual config)**: installing this plugin **auto-selects Tavily as the `web_search` provider** via its `cordis.patch.yml`. Paste a key in the card and search — no yaml or `DSH_WEB_SEARCH_PROVIDER` edits required.
 - **Tavily/DeepSeek engine switch**: a GUI switch answers `web_search` with Tavily (default; keyless if no key) or falls back to the **official DeepSeek** provider — no uninstall needed. This is a real provider-switch UI, not a config file edit.
 - **Server-side connectivity probe**: `POST /api/tavily-probe` lets the card test a **stored** key (browsers cannot read stored secrets), using keyless mode when none is set.
-- **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth` (basic/advanced/fast/ultra-fast), `topic`, `includeAnswer`, `includeRawContent`, `timeout`, `searchMode`, `days`, `chunksPerSource`, `timeRange`, `startDate`/`endDate`, `includeImages`, `includeDomains`/`excludeDomains`, and `country` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
+- **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth` (basic/advanced/fast/ultra-fast), `topic`, `includeAnswer`, `includeRawContent`, `timeout`, `days`, `chunksPerSource`, `timeRange`, `startDate`/`endDate`, `includeImages`, `includeDomains`/`excludeDomains`, and `country` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
 - **Configuration-first priority**: `cordis.patch.yml` > WebUI > code defaults. Any field explicitly set in the yaml is shown disabled on the card with a "covered by config file" badge, so a stale UI value can never shadow a developer's pinned config.
 - **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
 - **Usage & cost panel**: the card shows a live per-search credit/token estimate for the current settings, plus a `Check usage` button that reads Tavily `GET /usage` (remaining credits, search usage, plan) with the currently entered key. A host-side `usage()` method on the provider exposes the same data where the stored key is available.
 - **Page extraction**: a Tavily Extract-backed fetch provider (`tavily-extract`) reads a full page from a URL and returns it as clean text/html — select it once and URL retrieval is answered by Tavily.
-- **Search mode**: choose `tavily-only` (direct Tavily, skip DeepSeek), `deepseek-first` (run DeepSeek first, then merge Tavily results), or `tavily-first` (run Tavily first, then merge DeepSeek results) from the card.
 - **Rate-limit retry & cache**: extra attempts after a 429 response honor Tavily's `retry-after` with a bounded backoff, and an optional TTL cache serves identical searches to save credits.
 - **Credential-first key handling**: per-search resolution order is literal `apiKey` → credentials service (`apiKeyEnv`) → `process.env[apiKeyEnv]`.
 
@@ -87,8 +86,6 @@ This plugin now **auto-selects Tavily** (`web.searchProvider: tavily`), so a fre
 - **You overrode the provider in yaml.** Make sure no later `web` patch row points `searchProvider` at `deepseek` (the plugin's own row elects `tavily`).
 - **It is an agent/assistant harness.** A chat app's own `web_search` is a different `web` seam that has not installed this plugin — it always uses the default DeepSeek backend and is unrelated to your Tavily install.
 
-> `searchMode` (`tavily-only` / `deepseek-first` / `tavily-first`) only controls how Tavily **merges** DeepSeek once Tavily is selected — it is not the engine switch. Use the `engine` field / card switch to pick Tavily vs official DeepSeek.
-
 ## 🖥️ GUI usage (recommended for most users)
 
 Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)** card.
@@ -97,7 +94,6 @@ Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)**
   - **Web search engine** — `Tavily` (default; keyless if no key) or `official DeepSeek`. This is the real provider switch; the plugin is already elected as the provider.
   - **API key** — paste your Tavily key. It is stored through the credentials service, never in a settings file.
   - **API Base URL** — leave blank for `https://api.tavily.com`, or set a proxy/endpoint base.
-  - **Search mode** — `tavily-only` (default): direct Tavily, DeepSeek is not consulted; `deepseek-first` / `tavily-first`: merge DeepSeek with Tavily as a secondary. Orthogonal to the engine switch.
   - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
   - **Estimated cost** — a live line shows the estimated credits and rough token count for the current depth/result/chunk settings.
   - **Check usage** — reads Tavily `GET /usage` with the currently entered key and shows the remaining credits, search usage, and plan. Stored keys must be re-entered once, like the connectivity test.
@@ -135,7 +131,7 @@ Configuration lives in your profile's `cordis.patch.yml` (`~/.dsh/profiles/web/c
     maxResults: 8
     includeRawContent: false
     timeout: 20000
-    searchMode: deepseek-first
+    engine: tavily
 ```
 
 ### Priority
@@ -163,7 +159,7 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `chunksPerSource` | `3` | snippet chunks per source (1–3) | ✓ |
 | `timeRange` | unset | recency preset: `day`/`week`/`month`/`year`/`d`/`w`/`m`/`y` | ✓ |
 | `timeout` | `30000` | request timeout in milliseconds | ✓ |
-| `searchMode` | `tavily-only` | `tavily-only`, `deepseek-first`, or `tavily-first` | ✓ |
+| `engine` | `tavily` | engine answering web_search: `tavily` (keyless if no key) or `deepseek` | ✓ |
 | `days` | unset | recency window in days (news/finance topics) | ✓ |
 | `retryMaxAttempts` | `2` | extra attempts after a 429 (0–5) | ✓ |
 | `cacheTtlSeconds` | `0` | query-cache TTL in seconds (0 disables) | ✓ |
@@ -211,7 +207,7 @@ Tavily's flat `results[]` maps to normalized `WebSearchSource`s: `url` ← `url`
 High-confidence follow-ups identified in the product analysis:
 
 - ✅ **Usage / cost panel** — `GET /usage` in the card + live credit/token estimate (implemented).
-- ✅ **429 retry + short cache** — `retry-after`-aware backoff + optional TTL cache, plus `tavily-first` hybrid mode (implemented).
+- ✅ **429 retry + short cache** — `retry-after`-aware backoff + optional TTL cache (implemented).
 - ✅ **Extract capability** — a Tavily Extract-backed `WebFetchProvider` registered on the existing fetch seam (implemented).
 - ✅ **apiproxy allowlist friction** — an idempotent `scripts/patch-apiproxy.mjs` (implemented).
 

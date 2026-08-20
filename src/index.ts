@@ -37,7 +37,7 @@ import {
   TAVILY_EXTRACT_PROVIDER_ID,
   TAVILY_PROVIDER_ID,
 } from './provider'
-import type { HybridSearch, HybridSearchConfig, TavilySearchProviderOptions } from './provider'
+import type { DelegateSearch, TavilySearchProviderOptions } from './provider'
 
 export {
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -123,20 +123,11 @@ export interface Config {
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
-   * Search composition mode.
-   * - `tavily-only`: the Tavily provider answers directly and does not consult DeepSeek.
-   * - `deepseek-first`: the Tavily provider first runs the registered DeepSeek
-   *   search provider (when available) and merges its results with Tavily's.
-   * - `tavily-first`: run Tavily first, then the registered DeepSeek provider
-   *   (when available) and merge its results with Tavily's.
-   * Defaults to `tavily-only`.
-   */
-  searchMode?: 'tavily-only' | 'deepseek-first' | 'tavily-first'
   /**
    * Which engine answers `web_search`. `tavily` (default): this provider; if a
    * key is set, Tavily with that key, else keyless. `deepseek`: the official
    * DeepSeek search (useful to switch back without uninstalling). This is the
-   * card's Tavily/DeepSeek switch.
+   * card's engine switch — the single, non-overlapping provider selector.
    */
   engine?: 'tavily' | 'deepseek'
 }
@@ -165,7 +156,6 @@ export const Config: z<Config> = z.object({
   retryMaxAttempts: z.number().step(1).min(0).max(5).description('Extra attempts after a rate-limited (429) response.'),
   cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
-  searchMode: z.union(['tavily-only', 'deepseek-first', 'tavily-first'] as const).description('Search composition: Tavily-only, DeepSeek-first, or Tavily-first with merge.'),
   engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
 })
 
@@ -231,16 +221,14 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
 }
 
 /**
- * Build the optional secondary search used by the hybrid modes.
- *
- * The web seam deliberately exposes no public provider-lookup API, so this
- * reads the registry through the runtime's internal map as a best-effort
- * fallback (guarded: an absent map simply yields no secondary). It looks for a
- * registered provider whose id is `deepseek` (or contains `deepseek`) and is
- * `available()`; if none exists the mode degrades to a Tavily-only search (the
- * provider's own catch also hides any absence/failure).
+ * Build the official DeepSeek search used when the card's engine switch is
+ * `deepseek`. The web seam deliberately exposes no public provider-lookup API,
+ * so this reads the registry through the runtime's internal map (guarded: an
+ * absent map yields no delegate). It looks for a registered provider whose id
+ * is `deepseek` (or contains `deepseek`) and is `available()`. If none exists,
+ * the provider throws a clear error instead of silently degrading.
  */
-function hybridDeepSeekSearch(ctx: Context): HybridSearch {
+function deepseekSearch(ctx: Context): DelegateSearch {
   return async (request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult | undefined> => {
     const web = ctx.web as unknown as { searchProviders?: Map<string, WebSearchProvider> }
     const providers = web.searchProviders
@@ -255,25 +243,12 @@ function hybridDeepSeekSearch(ctx: Context): HybridSearch {
 }
 
 /**
- * Resolve the active hybrid composition from the current config, or `undefined`
- * for Tavily-only. `deepseek-first` leads with DeepSeek sources; `tavily-first`
- * leads with Tavily's; both merge the secondary provider when present.
- */
-function hybridFor(ctx: Context, current: () => Config): HybridSearchConfig | undefined {
-  const mode = current().searchMode ?? 'tavily-only'
-  if (mode === 'deepseek-first') return { run: hybridDeepSeekSearch(ctx), secondaryFirst: true }
-  if (mode === 'tavily-first') return { run: hybridDeepSeekSearch(ctx), secondaryFirst: false }
-  return undefined
-}
-
-/**
  * Resolve the web seam's configured search-provider id (`config.searchProvider`
  * ?? `DSH_WEB_SEARCH_PROVIDER`), or `undefined` when selection is left to the
  * seam's auto-selection rules.
  *
- * This is an informational read of a runtime-internal field (mirroring how the
- * hybrid mode reads the registry map); it never mutates anything and is only
- * used to warn when the active provider is not Tavily.
+ * This is an informational read of a runtime-internal field; it never mutates
+ * anything and is only used to warn when the active provider is not Tavily.
  */
 function configuredSearchProviderId(ctx: Context): string | undefined {
   const web = ctx.web as unknown as { searchProviderId?: string }
@@ -294,11 +269,9 @@ export function apply(ctx: Context, config: Config): void {
   })
   const provider = new TavilySearchProvider(
     () => resolveOptions(ctx, current(), entry),
-    // Re-evaluate per search so a UI/config switch takes effect live.
-    () => hybridFor(ctx, current),
-    // When the card's switch is off, answer through the official DeepSeek
-    // provider (the one registered by dsh-web-search-deepseek).
-    () => hybridDeepSeekSearch(ctx),
+    // When the card's engine switch is `deepseek`, answer through the official
+    // DeepSeek provider (the one registered by dsh-web-search-deepseek).
+    () => deepseekSearch(ctx),
   )
   ctx.web.registerSearchProvider(provider)
   // Dual-half: also register a Tavily Extract-backed fetch provider. Selecting
@@ -373,22 +346,20 @@ function readJsonBody(req: IncomingMessage, limit = 4096): Promise<Record<string
 }
 
 /**
- * Warn loudly when this plugin is installed but its `searchMode` is being
- * mistaken for provider selection: `searchMode` only decides how Tavily merges
- * the DeepSeek provider **once Tavily is selected**; it does NOT choose the
- * provider that answers `web_search`. That choice is the `web` seam's
- * `searchProvider` (or `DSH_WEB_SEARCH_PROVIDER`). Without it, `web_search`
- * keeps being answered by the built-in DeepSeek provider, which is exactly where
- * the confusing "no DeepSeek API key" error comes from.
+ * Warn when another provider is elected for `web_search` instead of this
+ * plugin's `tavily`. Because the bundle now elects `tavily` itself
+ * (`web.searchProvider: tavily`), a fresh install should not hit this; it fires
+ * only if a later `web` patch overrides the provider. `engine` (the card switch)
+ * selects between Tavily and official DeepSeek underneath the single provider.
  */
 function warnIfNotActiveSearchProvider(ctx: Context): void {
   const logger = ctx.logger('dsh-plugin-tavily')
   const active = configuredSearchProviderId(ctx)
-  const FIX = 'set web.config.searchProvider: tavily in cordis.patch.yml (or export DSH_WEB_SEARCH_PROVIDER=tavily), then restart dsh.'
+  const FIX = 'ensure web.config.searchProvider: tavily in cordis.patch.yml (the plugin already sets it), then restart dsh.'
   if (active !== undefined && active !== TAVILY_PROVIDER_ID) {
     logger.warn(
       `web_search is currently configured to the "${active}" search provider, NOT Tavily.`
-      + ` SearchMode only controls how Tavily merges DeepSeek once selected — to actually use this plugin, ${FIX}`,
+      + ` To use this plugin, ${FIX}`,
     )
   } else if (active === undefined) {
     logger.warn(

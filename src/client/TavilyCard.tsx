@@ -21,12 +21,10 @@ export type TavilyCardProps =
   & InjectFace<TavilyCardFace>
 
 /**
- * Copyable snippet wiring `web_search` to this provider. `searchMode` above is
- * only how Tavily merges DeepSeek once selected — it does NOT select the
- * provider. Without this `web.searchProvider: tavily` (or
- * `DSH_WEB_SEARCH_PROVIDER=tavily`), `web_search` keeps using the built-in
- * DeepSeek provider, which is where the confusing "no DeepSeek API key" error
- * comes from.
+ * Copyable snippet wiring `web_search` to this provider. This plugin already
+ * elects `web.searchProvider: tavily` in its own cordis.patch.yml, so the card
+ * "engine" switch (Tavily / official DeepSeek) is the only choice you need to
+ * make — the snippet below is only for overriding the provider manually.
  */
 const WIRING_YAML = `# ~/.dsh/profiles/<profile>/cordis.patch.yml
 - id: web
@@ -98,25 +96,6 @@ export function TavilyCard(props: TavilyCardProps) {
         {...state.baseURL}
         onEdit={(text) => { props.edit('baseURL', text) }}
         onReset={() => { props.resetField('baseURL') }}
-      />
-      <SelectField
-        id="plugin-config-tavily-search-mode"
-        label={t('tavilySearchMode')}
-        hint={t('tavilySearchModeHint')}
-        overriddenLabel={t('overridden')}
-        configCoveredLabel={t('configCovered')}
-        resetLabel={t('reset')}
-        invalidLabel={t('invalidNumber')}
-        placeholder="tavily-only"
-        disabled={disabled}
-        {...state.searchMode}
-        options={[
-          { value: 'tavily-only', label: t('searchModeTavilyOnly') },
-          { value: 'deepseek-first', label: t('searchModeDeepseekFirst') },
-          { value: 'tavily-first', label: t('searchModeTavilyFirst') },
-        ]}
-        onEdit={(text) => { props.edit('searchMode', text) }}
-        onReset={() => { props.resetField('searchMode') }}
       />
       <SelectField
         id="plugin-config-tavily-engine"
