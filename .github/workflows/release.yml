@@ -124,5 +124,5 @@ jobs:
             -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
           # Publish the release at that tag, then attach the packed tarball.
           gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md
-          gh release upload "$TAG" dsh-external-dsh-plugin-tavily-${{ steps.version.outputs.version }}.tgz
+          gh release upload "$TAG" "dsh-external-dsh-plugin-tavily-${{ steps.version.outputs.version }}.tgz"
           echo "released $TAG"

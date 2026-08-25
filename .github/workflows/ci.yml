@@ -94,9 +94,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dshcli"
           pnpm --dir "$RUNNER_TEMP/dshcli" init
           pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
-      # Scoped-name pack output, e.g. dsh-external-dsh-plugin-tavily-0.6.1.tgz
+      # Scoped-name pack output: dsh-external-dsh-plugin-tavily-<version>.tgz.
+      # Resolve it at runtime so version bumps never desync the filename
+      # (0.6.1 was hardcoded here once and broke the smoke with ENOENT).
       - name: Boot smoke on dsh ${{ matrix.dsh }}
         env:
-          PLUGIN_TGZ: ${{ runner.temp }}/dsh-external-dsh-plugin-tavily-0.6.1.tgz
           DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
-        run: node tests/profile-boot-smoke.mjs
+        run: |
+          PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
+          node tests/profile-boot-smoke.mjs
