@@ -1,0 +1,92 @@
+name: Release
+
+# Fully automated tagging + release: push to main and if package.json's
+# version has no `v<version>` tag yet, build, tag, and publish a GitHub
+# Release (changelog from scripts/release-notes.mjs + the packed plugin
+# tarball as an asset). The version bump in package.json is the single human
+# step; release cadence = version-bump cadence (SemVer-driven).
+#
+# Policy recap (see README «Development»):
+#   - patch (x.y+1): bug fixes, especially issue-anchored ones — release soon,
+#     someone is waiting (e.g. the settings.plugin.item fix in v0.6.1)
+#   - minor (x+1.y): feature batches, released when the batch lands + CI green
+#   - major: breaking contract changes (peerDeps, slot contract, provider API)
+#
+# The documented `#main` install path delivers every merged commit regardless;
+# tags are the immutable "recommended version" snapshots this workflow emits.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags + full history for changelog
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Resolve version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: released
+        run: |
+          git fetch --tags origin
+          if git tag -l "${{ steps.version.outputs.tag }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install, build, pack
+        if: steps.released.outputs.exists == 'false'
+        run: |
+          pnpm install
+          pnpm build
+          pnpm pack --pack-destination .
+
+      - name: Generate release notes
+        if: steps.released.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          node scripts/release-notes.mjs "$PREV" "$TAG" > /tmp/notes.md
+          echo "--- notes head ---"
+          head -5 /tmp/notes.md
+
+      - name: Tag and publish release
+        if: steps.released.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # Create the tag server-side (no push round-trip needed).
+          gh api --method POST "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
+          # Publish the release at that tag, then attach the packed tarball.
+          gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md
+          gh release upload "$TAG" dsh-external-dsh-plugin-tavily-${{ steps.version.outputs.version }}.tgz
+          echo "released $TAG"
