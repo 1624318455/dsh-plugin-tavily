@@ -20,6 +20,9 @@
 - **页面抓取**：基于 Tavily Extract 的 fetch 提供方（`tavily-extract`）从 URL 读取整页内容并返回干净的 text/html —— 选择一次后，URL 检索即由 Tavily 应答。
 - **限流重试与缓存**：收到 429 后按 `retry-after` 做有界退避重试；可选 TTL 缓存让相同查询直接命中以节省额度——缓存带 **LRU 上限**（默认 200 条），且默认对**时效敏感查询**（news/finance 主题或任意时间窗口）完全跳过，「现在」类问题绝不命中陈旧快照。
 - **精简调试日志**：可选 `debug` 开关，每次搜索/抓取输出一行可读日志（查询节选、深度、积分、缓存状态、耗时、分类错误）——绝不记录密钥或原始响应体。
+- **多密钥轮换 & 故障转移**：`apiKeyRefs` 列出额外凭据引用（只存引用名，密钥仍在凭据库/环境变量中），与字面量 `apiKey`、`apiKeyEnv` 组成轮换环。搜索在 Key 级故障（429 / Key 无效 / 余额不足）时自动切到环中下一把 Key；连续失败 3 次的 Key 进入 60 秒冷却，保证健康 Key 接管。
+- **脚注式引用（证据溯源）**：`citeFormat: footnote` 在生成摘要后追加编号来源块（`Sources:\n[1] 标题 — url…`），模型可按编号引用来源；`plain`（默认）仅返回摘要原文。
+- **自动兜底引擎**：`fallbackEngine: deepseek` 在 Tavily 出现服务侧故障（超时 / 网络 / 5xx）时改由官方 DeepSeek 搜索应答；Key 级故障（429/401）不触发兜底——那是凭据问题，不是宕机。
 - **凭据优先的密钥解析**：每次搜索按 字面量 `apiKey` → 凭据服务（`apiKeyEnv`）→ `process.env[apiKeyEnv]` 的顺序解析。
 
 ## 安装
@@ -119,6 +122,8 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
   - **缓存条目上限** —— 缓存条目的 LRU 上限（1–10000，默认 200）；超出后淘汰最旧条目。
   - **时效性查询跳过缓存** —— 开启（默认）时，news/finance 主题或带时间窗口的搜索完全绕过缓存。
   - **调试日志** —— 每次搜索/抓取输出一行精简日志（查询节选、积分、缓存状态、耗时、错误）；绝不记录密钥或原始响应。
+  - **引用格式** —— `plain`（仅摘要，默认）或 `footnote`（追加 `[1] 标题 — url…` 编号来源块，模型可按编号引用）。
+  - **兜底引擎** —— `none`（默认）或 `DeepSeek（自动兜底）`：Tavily 服务侧故障（超时/网络/5xx）时改由官方 DeepSeek 应答。
   - **请求超时（毫秒）** —— 默认 30000。
   - **时间窗口（天）** —— 可选，用于 news/finance 的时效过滤。
 
@@ -140,6 +145,11 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
     includeRawContent: false
     timeout: 20000
     engine: tavily
+    citeFormat: footnote          # 摘要后追加编号引用块 [1] 标题 — url
+    fallbackEngine: deepseek      # Tavily 服务侧宕机时由 DeepSeek 兜底
+    apiKeyRefs:                   # 多密钥轮换环（只放凭据引用名）
+      - TAVILY_API_KEY_1
+      - TAVILY_API_KEY_2
 ```
 
 ### 优先级
@@ -158,6 +168,7 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 |---|---|---|---|
 | `apiKey` | （未设） | Tavily API 密钥字面量；建议用凭据服务 | 密钥输入框（走凭据） |
 | `apiKeyEnv` | `TAVILY_API_KEY` | 凭据引用（环境变量名），每次搜索时解析 | 仅配置 |
+| `apiKeyRefs` | `[]` | 多密钥轮换环的额外凭据引用（仅引用名；密钥在凭据库/env） | 仅配置 |
 | `baseURL` | `https://api.tavily.com` | 端点基址，追加 `/search` | ✓ |
 | `maxResults` | `5` | 单次搜索默认结果数（1–20） | ✓ |
 | `searchDepth` | `basic` | `basic`/`advanced`/`fast`/`ultra-fast` | ✓ |
@@ -168,6 +179,8 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `timeRange` | （未设） | 时效预设：`day`/`week`/`month`/`year`/`d`/`w`/`m`/`y` | ✓ |
 | `timeout` | `30000` | 请求超时（毫秒） | ✓ |
 | `engine` | `tavily` | 应答 web_search 的引擎：`tavily`（无 Key 走 keyless）或 `deepseek` | ✓ |
+| `citeFormat` | `plain` | 答案/来源排版：`plain` 或 `footnote`（编号引用块） | ✓ |
+| `fallbackEngine` | `none` | Tavily 服务侧故障（超时/网络/5xx）时改为 `deepseek` 应答 | ✓ |
 | `days` | （未设） | 时效窗口（天），用于 news/finance | ✓ |
 | `retryMaxAttempts` | `2` | 收到 429 后的额外重试（0–5） | ✓ |
 | `cacheTtlSeconds` | `0` | 查询缓存时长（秒），0 关闭 | ✓ |
@@ -226,6 +239,9 @@ Tavily 的扁平 `results[]` 映射为规范化的 `WebSearchSource`：`url` ←
 - ✅ **缓存加固** —— LRU 上限（`cacheMaxEntries`）+ 时效性查询绕行（`cacheBypassFresh`）（已实现）。
 - ✅ **参数预设** —— 卡片一键暂存「深度研究 / 快速摘要 / 新闻实时」（已实现）。
 - ✅ **精简调试日志** —— 可选 `debug` 开关，每次搜索/抓取输出一行可读日志（已实现）。
+- ✅ **多密钥轮换 & 故障转移** —— `apiKeyRefs` 凭据引用环，429/Key 无效/余额不足自动轮换，3 次失败进冷却（已实现）。
+- ✅ **脚注式引用（证据溯源）** —— `citeFormat: footnote` 在摘要后追加编号来源块（已实现）。
+- ✅ **自动兜底引擎** —— `fallbackEngine: deepseek` 在超时/网络/5xx 时自动兜底（已实现）。
 
 ## 开发
 

@@ -615,6 +615,42 @@ export function TavilyCard(props: TavilyCardProps) {
           onEdit={(text) => { props.edit('timeout', text) }}
           onReset={() => { props.resetField('timeout') }}
         />
+        <SelectField
+          id="plugin-config-tavily-cite-format"
+          label={t('tavilyCiteFormat')}
+          hint={t('tavilyCiteFormatHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder={t('citeFormatPlain')}
+          disabled={disabled}
+          {...state.citeFormat}
+          options={[
+            { value: 'plain', label: t('citeFormatPlain') },
+            { value: 'footnote', label: t('citeFormatFootnote') },
+          ]}
+          onEdit={(text) => { props.edit('citeFormat', text) }}
+          onReset={() => { props.resetField('citeFormat') }}
+        />
+        <SelectField
+          id="plugin-config-tavily-fallback-engine"
+          label={t('tavilyFallbackEngine')}
+          hint={t('tavilyFallbackEngineHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          placeholder={t('fallbackNone')}
+          disabled={disabled}
+          {...state.fallbackEngine}
+          options={[
+            { value: 'none', label: t('fallbackNone') },
+            { value: 'deepseek', label: t('fallbackDeepseek') },
+          ]}
+          onEdit={(text) => { props.edit('fallbackEngine', text) }}
+          onReset={() => { props.resetField('fallbackEngine') }}
+        />
         <ValueField
           id="plugin-config-tavily-days"
           label={t('tavilyDays')}

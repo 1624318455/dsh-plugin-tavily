@@ -84,6 +84,15 @@ export const TAVILY_DEFAULT_CACHE_MAX_ENTRIES = 200
  */
 export const TAVILY_DEFAULT_CACHE_BYPASS_FRESH = true
 
+/**
+ * Consecutive key-level failures (429 / invalid key / insufficient credits)
+ * after which a key enters a cooldown so the ring prefers the healthy keys.
+ */
+const KEY_FAILOVER_THRESHOLD = 3
+
+/** Cooldown (ms) a key sits out after reaching the failover threshold. */
+const KEY_COOLDOWN_MS = 60_000
+
 /** Base delay (ms) for the exponential rate-limit backoff before retrying. */
 const RETRY_BASE_DELAY_MS = 250
 
@@ -94,7 +103,7 @@ const RETRY_MAX_DELAY_MS = 4_000
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.4.0'
+const USER_AGENT = 'dsh-plugin-tavily/0.5.0'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the
@@ -106,6 +115,33 @@ export interface TavilySearchProviderOptions {
   apiKey?: string
   /** Resolve the operation's key; returned when the literal is absent. */
   resolveApiKey?: () => Promise<string | undefined>
+  /**
+   * Ordered list of additional credential references (e.g. `TAVILY_API_KEY_1`,
+   * `TAVILY_API_KEY_2`) resolved for the rotation ring. Together with the
+   * literal key and {@link apiKeyEnv} they form the multi-key ring a search
+   * rotates through on key-level failures (429 / invalid key / insufficient
+   * credits). Refs only — keys themselves stay in the credentials store or env.
+   */
+  apiKeyRefs?: readonly string[]
+  /**
+   * Resolve a list of credential references in order; one `undefined` per ref
+   * when that layer has no value. Used to build the rotation ring per operation.
+   */
+  resolveKeyRefs?: (refs: readonly string[]) => Promise<ReadonlyArray<string | undefined>>
+  /**
+   * How the generated answer and sources are formatted for the model:
+   * `plain` (default) carries Tavily's answer alone; `footnote` appends a
+   * numbered source block (`[1] title — url …`) that the model can cite.
+   */
+  citeFormat?: 'plain' | 'footnote'
+  /**
+   * When the Tavily search fails with a Tavily-side problem (timeout, network,
+   * or 5xx service error), answer through the official DeepSeek provider as a
+   * last resort. `none` (default) never falls back; `deepseek` requires a
+   * registered DeepSeek search. Key-level failures (429 / 401) do not trigger
+   * this — they are credential problems, not outages.
+   */
+  fallbackEngine?: 'none' | 'deepseek'
   /**
    * Resolve whether the card's Tavily/DeepSeek switch is on. Defaults to `true`
    * (Tavily) when absent; `false` makes this provider delegate to the official
@@ -206,22 +242,57 @@ export function mapTavilyResult(result: TavilyResult): WebSearchSource | undefin
  * Map a Tavily response envelope to a normalized search result.
  *
  * @param response - the parsed `POST /search` response body.
+ * @param citeFormat - `plain` (default) carries the generated answer alone;
+ *   `footnote` appends a numbered source block the model can cite, so the
+ *   answer text and `[1] title — url` citations travel in one `content`.
  * @returns the normalized result; content-less entries are dropped
  *   ({@link mapTavilyResult}), and the generated answer (when present) becomes
  *   `content`.
  */
-export function mapTavilyResponse(response: TavilySearchResponse): WebSearchResult {
+export function mapTavilyResponse(
+  response: TavilySearchResponse,
+  citeFormat: 'plain' | 'footnote' = 'plain',
+): WebSearchResult {
   const sources = (response.results ?? [])
     .map(mapTavilyResult)
     .filter((source): source is WebSearchSource => source !== undefined)
   const answer = response.answer
+  let content: string | undefined
+  if (answer != null && answer.length > 0) {
+    content = answer
+    if (citeFormat === 'footnote' && sources.length > 0) {
+      content += '\n\n' + footnoteBlock(sources)
+    }
+  } else if (citeFormat === 'footnote' && sources.length > 0) {
+    content = footnoteBlock(sources)
+  }
   // The generated answer is optional provider text; the seam owns the final
   // `maxResults` truncation, so this provider reports `truncated: false`.
   return {
-    ...answer != null && answer.length > 0 ? { content: answer } : {},
+    ...content !== undefined && content.length > 0 ? { content } : {},
     sources,
     truncated: false,
   }
+}
+
+/**
+ * Build the numbered citation block footnote mode appends to the answer:
+ * one `[N] title — url` line per source with a short snippet excerpt, so the
+ * model can reference sources by number.
+ * @param sources - the normalized sources.
+ * @returns a plain-text numbered block, or nothing when there are no sources.
+ */
+function footnoteBlock(sources: readonly WebSearchSource[]): string {
+  const lines = sources.map((source, index) => {
+    const title = source.title !== undefined && source.title.length > 0 ? source.title : source.url
+    const line = `[${index + 1}] ${title} — ${source.url}`
+    if (source.snippet !== undefined && source.snippet.length > 0) {
+      const excerpt = source.snippet.length > 240 ? `${source.snippet.slice(0, 240)}…` : source.snippet
+      return `${line}\n   ${excerpt}`
+    }
+    return line
+  })
+  return `Sources:\n${lines.join('\n')}`
 }
 
 /**
@@ -254,6 +325,12 @@ export class TavilySearchProvider implements WebSearchProvider {
 
   /** Short-lived in-memory result cache, keyed by a request/options fingerprint. */
   private readonly cache = new Map<string, CacheEntry>()
+
+  /** Per-key failover state: consecutive failures and the cooldown expiry. */
+  private readonly keyStates = new Map<string, { failures: number; cooldownUntil: number }>()
+
+  /** Ring cursor: the next search starts at this key so failures rotate fairly. */
+  private rotationCursor = 0
 
   /**
    * @param resolveOptions - thunk producing one operation's option snapshot. The
@@ -305,21 +382,99 @@ export class TavilySearchProvider implements WebSearchProvider {
       debugLog(options, `search "${truncateQuery(request.query)}" -> deepseek engine, ${Date.now() - started}ms, ${delegated.sources.length} sources`)
       return delegated
     }
-    const apiKey = await resolveRequestApiKey(options, signal)
+    // The rotation ring: literal key first, then every configured credential
+    // reference. A search rotates through the ring on key-level failures.
+    const keys = await requestKeyRing(options, signal)
     const stats: SearchStats = { cache: 'disabled' }
-    try {
-      const result = await this.tavilySearch(request, signal, options, apiKey, stats)
-      debugLog(
-        options,
-        `search "${truncateQuery(request.query)}" depth=${options.searchDepth} `
-        + `results=${result.sources.length} credits=${estimateSearchCredits(options.searchDepth)} `
-        + `cache=${stats.cache} ${Date.now() - started}ms`,
-      )
-      return result
-    } catch (error: unknown) {
-      debugLog(options, `search "${truncateQuery(request.query)}" failed: ${describeSearchError(error)}`)
-      throw error
+    const startIndex = this.rotationCursor % keys.length
+    let lastFailure: WebError | undefined
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[(startIndex + i) % keys.length]
+      if (this.keyCooldownUntil(key) > Date.now()) continue
+      try {
+        const result = await this.tavilySearch(request, signal, options, key, stats)
+        this.noteKeySuccess(key)
+        this.rotationCursor = (startIndex + i + 1) % keys.length
+        debugLog(
+          options,
+          `search "${truncateQuery(request.query)}" depth=${options.searchDepth} `
+          + `results=${result.sources.length} credits=${estimateSearchCredits(options.searchDepth)} `
+          + `cache=${stats.cache} ${Date.now() - started}ms`,
+        )
+        return result
+      } catch (error: unknown) {
+        const code = tavilyCodeOf(error)
+        if (code !== undefined && isRotatableCode(code)) {
+          // Key-level failure: another key in the ring may still work.
+          this.noteKeyFailure(key)
+          debugLog(options, `search "${truncateQuery(request.query)}" key rotated (${code}): ${describeSearchError(error)}`)
+          lastFailure = error instanceof WebError
+            ? error
+            : new WebError(String(error), 'WEB_PROVIDER_ERROR')
+          continue
+        }
+        debugLog(options, `search "${truncateQuery(request.query)}" failed: ${describeSearchError(error)}`)
+        // Rate-limit/credit faults never trigger the fallback engine (they are
+        // credential problems); a Tavily-side outage just might.
+        const fallen = await this.tryTavilyFallback(options, request, signal, error)
+        if (fallen !== undefined) return fallen
+        throw error
+      }
     }
+    // Every ring entry was failed or in cooldown; surface the last failure
+    // (or a clear message when the ring held only cooled-down keys).
+    if (lastFailure !== undefined) throw lastFailure
+    throw new WebError(
+      'Tavily search failed: every API key in the rotation ring is in cooldown after repeated failures',
+      'WEB_PROVIDER_ERROR',
+    )
+  }
+
+  /**
+   * When the Tavily call failed with a Tavily-side problem and `fallbackEngine`
+   * is `deepseek`, answer through the official DeepSeek provider once.
+   * @returns the delegated result, or `undefined` when no fallback applies.
+   */
+  private async tryTavilyFallback(
+    options: TavilySearchProviderOptions,
+    request: WebSearchRequest,
+    signal: AbortSignal | undefined,
+    original: unknown,
+  ): Promise<WebSearchResult | undefined> {
+    if (options.fallbackEngine !== 'deepseek') return undefined
+    const code = tavilyCodeOf(original)
+    if (code === undefined || !isFallbackCode(code)) return undefined
+    const deepseek = this.deepseekDelegate?.()
+    if (deepseek === undefined) return undefined
+    try {
+      const delegated = await deepseek(request, signal)
+      if (delegated === undefined) return undefined
+      debugLog(options, `search "${truncateQuery(request.query)}" fell back to DeepSeek (${code})`)
+      return delegated
+    } catch (_delegateFailure) {
+      return undefined
+    }
+  }
+
+  /** A successful search clears a key's failover marks. */
+  private noteKeySuccess(key: string): void {
+    this.keyStates.delete(key)
+  }
+
+  /** One key-level failure; past the threshold the key enters a cooldown. */
+  private noteKeyFailure(key: string): void {
+    const state = this.keyStates.get(key) ?? { failures: 0, cooldownUntil: 0 }
+    state.failures += 1
+    if (state.failures >= KEY_FAILOVER_THRESHOLD) {
+      state.cooldownUntil = Date.now() + KEY_COOLDOWN_MS
+      state.failures = 0
+    }
+    this.keyStates.set(key, state)
+  }
+
+  /** When the key's cooldown expires; `0` means not in cooldown. */
+  private keyCooldownUntil(key: string): number {
+    return this.keyStates.get(key)?.cooldownUntil ?? 0
   }
 
   /**
@@ -693,15 +848,16 @@ export class TavilySearchProvider implements WebSearchProvider {
           // malformed/non-JSON error body (normal for gateway 5xx/429s) can only
           // cost a richer provider message, never the real error.
         }
-        // A finer code travels in the message so the card/host can tell "invalid
-        // key" from "insufficient credits" and "rate limit" from "service down".
+        // A finer code travels on the error so the ring can rotate and the
+        // debug log can name the class ("invalid key" vs "insufficient
+        // credits" vs "rate limit" vs "service down").
         const code = classifyTavilyHttpStatus(status, message)
-        throw new WebError(`Tavily API error (${code}): ${message}`, 'WEB_PROVIDER_ERROR')
+        throw tavilyWebError(code, message)
       }
 
       try {
         const payload = await response.json() as TavilySearchResponse
-        const result = mapTavilyResponse(payload)
+        const result = mapTavilyResponse(payload, options.citeFormat ?? 'plain')
         if (cacheEnabled && cacheKey !== undefined) {
           this.cache.set(cacheKey, { expires: Date.now() + cacheTtl, result })
           this.evictCacheTo(options)
@@ -820,33 +976,67 @@ function classifyFetchBody(content: string): WebFetchBody {
 }
 
 /**
- * Resolve one operation's credential without retaining it on the provider.
- * @param options - the caller's snapshot, so the key and the endpoint it is sent to come from one section.
+ * Resolve one operation's rotation ring without retaining keys on the provider:
+ * literal `apiKey` first, then every configured credential reference resolved
+ * by {@link TavilySearchProviderOptions.resolveKeyRefs} (falling back to
+ * {@link TavilySearchProviderOptions.resolveApiKey} when the list resolver is
+ * absent). Values are deduplicated; an empty ring throws the credential-missing
+ * error so callers can surface it (probe falls back to keyless, status reports
+ * `no-key`).
+ * @param options - the caller's snapshot, so the keys and the endpoint they are
+ *   sent to come from one section.
  * @param signal - abort signal for the surrounding operation.
- * @returns the resolved key.
+ * @returns the ordered, non-empty key ring.
+ */
+async function requestKeyRing(
+  options: TavilySearchProviderOptions,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  throwIfSearchAborted(signal)
+  const ring: string[] = []
+  const literal = options.apiKey
+  if (literal !== undefined && literal.length > 0) ring.push(literal)
+  if (options.resolveKeyRefs !== undefined) {
+    const refs = [...new Set([
+      ...(options.apiKeyRefs ?? []),
+      options.apiKeyEnv ?? TAVILY_DEFAULT_API_KEY_ENV,
+    ])]
+    if (refs.length > 0) {
+      const resolved = await abortable(options.resolveKeyRefs(refs), signal)
+      for (const value of resolved) {
+        if (value !== undefined && value.length > 0 && !ring.includes(value)) ring.push(value)
+      }
+    }
+  } else {
+    const single = await abortable(options.resolveApiKey?.() ?? Promise.resolve(undefined), signal)
+    if (single !== undefined && single.length > 0 && !ring.includes(single)) ring.push(single)
+  }
+  if (ring.length === 0) throw credentialMissingError(options)
+  return ring
+}
+
+/**
+ * Resolve one operation's primary key — the first entry of the rotation ring —
+ * without retaining it on the provider. Used by the single-key host paths
+ * (probe, status, connectivity test, extract): they address the ring's first
+ * usable key, which preserves the historical single-key behavior when no
+ * multi-key ring is configured.
+ * @param options - the caller's snapshot.
+ * @param signal - abort signal for the surrounding operation.
+ * @returns the primary resolved key.
  */
 function resolveRequestApiKey(options: TavilySearchProviderOptions, signal?: AbortSignal): Promise<string> {
-  throwIfSearchAborted(signal)
-  if (options.apiKey !== undefined && options.apiKey.length > 0) return Promise.resolve(options.apiKey)
-  return abortable(options.resolveApiKey?.() ?? Promise.resolve(undefined), signal).then(
-    (resolved) => {
-      if (resolved !== undefined && resolved.length > 0) return resolved
-      const ref = options.apiKeyEnv ?? TAVILY_DEFAULT_API_KEY_ENV
-      throw new WebError(
-        `Tavily search has no API key for "${ref}"; store it through the credentials service`
-        + ' (the web Plugins page writes it), export it in the launching environment, or set a literal'
-        + ' "apiKey" in the web-search-tavily config',
-        'WEB_PROVIDER_CREDENTIAL_MISSING',
-      )
-    },
-    (error: unknown) => {
-      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
-      throw new WebError(
-        `Tavily search credential resolution failed: ${String(error)}`,
-        'WEB_PROVIDER_ERROR',
-        { cause: error },
-      )
-    },
+  return requestKeyRing(options, signal).then(ring => ring[0])
+}
+
+/** The provider's stable credential-missing error for an empty ring. */
+function credentialMissingError(options: TavilySearchProviderOptions): WebError {
+  const ref = options.apiKeyEnv ?? TAVILY_DEFAULT_API_KEY_ENV
+  return new WebError(
+    `Tavily search has no API key for "${ref}"; store it through the credentials service`
+    + ' (the web Plugins page writes it), export it in the launching environment, or set a literal'
+    + ' "apiKey" in the web-search-tavily config',
+    'WEB_PROVIDER_CREDENTIAL_MISSING',
   )
 }
 
@@ -877,6 +1067,44 @@ function classifyTavilyHttpStatus(status: number, message: string): TavilyStatus
   if (status >= 500) return 'server_down'
   if (status === 408) return 'timeout'
   return 'http'
+}
+
+/**
+ * Build a `WebError` carrying the machine-routable Tavily code on a hidden
+ * `tavilyCode` property, so the search ring can rotate, the fallback engine
+ * can decide, and the debug log can name the class — without changing the
+ * seam-visible message text.
+ */
+function tavilyWebError(
+  code: TavilyStatusCodes,
+  message: string,
+  options?: { cause?: unknown },
+): WebError {
+  const error = new WebError(`Tavily API error (${code}): ${message}`, 'WEB_PROVIDER_ERROR', options)
+  ;(error as { tavilyCode?: TavilyStatusCodes }).tavilyCode = code
+  return error
+}
+
+/** The classified code attached to a Tavily failure, or `undefined`. */
+function tavilyCodeOf(error: unknown): TavilyStatusCodes | undefined {
+  if (error instanceof WebError) return (error as { tavilyCode?: TavilyStatusCodes }).tavilyCode
+  return undefined
+}
+
+/**
+ * Key-level failures the rotation ring reacts to: another key in the ring can
+ * plausibly succeed where this one failed.
+ */
+function isRotatableCode(code: TavilyStatusCodes): boolean {
+  return code === 'rate_limited' || code === 'insufficient_credits' || code === 'invalid_key'
+}
+
+/**
+ * Tavily-side failures the fallback engine reacts to — timeout, network, or a
+ * 5xx service outage. Key-level faults (429 / 401) never trigger a fallback.
+ */
+function isFallbackCode(code: TavilyStatusCodes): boolean {
+  return code === 'timeout' || code === 'network' || code === 'server_down'
 }
 
 /**
@@ -945,10 +1173,10 @@ function classifiedSearchError(
   timeoutMs: number | undefined,
 ): WebError {
   if (timeoutSignal?.aborted === true) {
-    return new WebError(`Tavily search timed out after ${timeoutMs}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+    return tavilyWebError('timeout', `Tavily search timed out after ${timeoutMs}ms`, { cause: error })
   }
   if (signal?.aborted === true || isAbortError(error)) return searchAborted(signal, error)
-  return new WebError(`Tavily search request failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
+  return tavilyWebError('network', `Tavily search request failed: ${String(error)}`, { cause: error })
 }
 
 /**

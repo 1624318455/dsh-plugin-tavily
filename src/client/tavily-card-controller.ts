@@ -92,6 +92,10 @@ export interface TavilySettings {
   /** Search composition mode used by the Tavily provider. */
   /** Which engine answers web_search: 'tavily' (default) or 'deepseek'. */
   engine?: 'tavily' | 'deepseek'
+  /** Formatted answer/source layout: 'plain' (default) or 'footnote' (numbered citations). */
+  citeFormat?: 'plain' | 'footnote'
+  /** On a Tavily-side failure, answer via DeepSeek: 'none' (default) or 'deepseek'. */
+  fallbackEngine?: 'none' | 'deepseek'
 }
 
 /**
@@ -276,6 +280,10 @@ export interface TavilyCardState extends CardShell {
   timeout: CardFieldState
   /** Engine switch (Tavily vs official DeepSeek). */
   engine: CardFieldState
+  /** Answer/source layout: plain answer or numbered footnote citations. */
+  citeFormat: CardFieldState
+  /** Automatic fallback engine on Tavily-side failures. */
+  fallbackEngine: CardFieldState
   /** The staged credential, which starts blank on every load. */
   apiKey: CardFieldState
   /** Whether the Host reports a credential configured for the referenced key. */
@@ -354,6 +362,8 @@ export class TavilyCardController {
         booleanField('cacheBypassFresh', true),
         booleanField('debug', false),
         selectField('engine', ['tavily', 'deepseek']),
+        selectField('citeFormat', ['plain', 'footnote']),
+        selectField('fallbackEngine', ['none', 'deepseek']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
@@ -389,6 +399,8 @@ export class TavilyCardController {
       debug: this.form.field('debug'),
       timeout: this.form.field('timeout'),
       engine: this.form.field('engine'),
+      citeFormat: this.form.field('citeFormat'),
+      fallbackEngine: this.form.field('fallbackEngine'),
       apiKey: this.form.field(API_KEY_FIELD),
       apiKeyConfigured: this.credential.configured,
       apiKeyWritable: this.credential.writable,

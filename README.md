@@ -20,6 +20,9 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 - **Page extraction**: a Tavily Extract-backed fetch provider (`tavily-extract`) reads a full page from a URL and returns it as clean text/html — select it once and URL retrieval is answered by Tavily.
 - **Rate-limit retry & cache**: extra attempts after a 429 response honor Tavily's `retry-after` with a bounded backoff, and an optional TTL cache serves identical searches to save credits — LRU-capped (default 200 entries) and, by default, skipped entirely for recency-sensitive searches (news/finance topics or any time window) so a "right now" question never gets a stale snapshot.
 - **Concise debug logging**: an opt-in `debug` switch logs one readable line per search/extract (query excerpt, depth, credits, cache state, duration, classified error) — never the API key or raw response bodies.
+- **Multi-key rotation & failover**: `apiKeyRefs` lists extra credential references (refs only — keys stay in the credentials store/environment) forming a rotation ring with the literal key and `apiKeyEnv`. A search rotates through the ring on key-level failures (429 / invalid key / insufficient credits); a key that fails 3 times in a row enters a 60s cooldown so the healthy keys take over.
+- **Footnote citations**: `citeFormat: footnote` appends a numbered source block to the generated answer (`Sources:\n[1] title — url…`), so the model can cite sources by number; `plain` (default) keeps the answer alone.
+- **Automatic fallback engine**: `fallbackEngine: deepseek` answers a search through the official DeepSeek provider when Tavily fails with a service-side problem (timeout / network / 5xx). Key-level faults (429/401) never trigger the fallback — they are credential problems, not outages.
 - **Credential-first key handling**: per-search resolution order is literal `apiKey` → credentials service (`apiKeyEnv`) → `process.env[apiKeyEnv]`.
 
 ## Install
@@ -119,6 +122,8 @@ Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)**
   - **Cache max entries** — LRU cap on cached searches (1–10000, default 200); the oldest entry evicts past it.
   - **Skip cache for fresh queries** — when on (default), news/finance searches and searches with a time window bypass the cache entirely.
   - **Debug logging** — one concise line per search/extract (query excerpt, credits, cache state, duration, errors); never the key or raw bodies.
+  - **Citation format** — `plain` (answer only, default) or `footnote` (appends `[1] title — url…` numbered sources the model can cite).
+  - **Fallback engine** — `none` (default) or `DeepSeek (automatic)`: on a Tavily-side failure (timeout/network/5xx) the search is answered by the official DeepSeek provider.
   - **Request timeout (ms)** — default 30000.
   - **Recency window (days)** — optional recency filter for news/finance topics.
 
@@ -140,6 +145,11 @@ Configuration lives in your profile's `cordis.patch.yml` (`~/.dsh/profiles/web/c
     includeRawContent: false
     timeout: 20000
     engine: tavily
+    citeFormat: footnote          # numbered [1] title — url citations in the answer
+    fallbackEngine: deepseek      # answer via DeepSeek on a Tavily-side outage
+    apiKeyRefs:                   # multi-key rotation ring (credential refs only)
+      - TAVILY_API_KEY_1
+      - TAVILY_API_KEY_2
 ```
 
 ### Priority
@@ -158,6 +168,7 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 |---|---|---|---|
 | `apiKey` | unset | literal Tavily API key; prefer the credentials store instead | key field (via credentials) |
 | `apiKeyEnv` | `TAVILY_API_KEY` | credential reference / environment key the provider resolves per search | config only |
+| `apiKeyRefs` | `[]` | extra credential references for the multi-key rotation ring (refs only; keys stay in the credentials store/env) | config only |
 | `baseURL` | `https://api.tavily.com` | endpoint base, `/search` appended | ✓ |
 | `maxResults` | `5` | default number of web results per search (1–20) | ✓ |
 | `searchDepth` | `basic` | `basic`/`advanced`/`fast`/`ultra-fast` | ✓ |
@@ -168,6 +179,8 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `timeRange` | unset | recency preset: `day`/`week`/`month`/`year`/`d`/`w`/`m`/`y` | ✓ |
 | `timeout` | `30000` | request timeout in milliseconds | ✓ |
 | `engine` | `tavily` | engine answering web_search: `tavily` (keyless if no key) or `deepseek` | ✓ |
+| `citeFormat` | `plain` | answer/source layout: `plain` or `footnote` (numbered citations) | ✓ |
+| `fallbackEngine` | `none` | on a Tavily-side failure (timeout/network/5xx), answer via `deepseek` | ✓ |
 | `days` | unset | recency window in days (news/finance topics) | ✓ |
 | `retryMaxAttempts` | `2` | extra attempts after a 429 (0–5) | ✓ |
 | `cacheTtlSeconds` | `0` | query-cache TTL in seconds (0 disables) | ✓ |
@@ -226,6 +239,9 @@ High-confidence follow-ups identified in the product analysis:
 - ✅ **Cache hardening** — LRU cap (`cacheMaxEntries`) + fresh-query bypass (`cacheBypassFresh`) (implemented).
 - ✅ **Parameter presets** — deep research / quick summary / live news one-click staging in the card (implemented).
 - ✅ **Concise debug logging** — opt-in `debug` switch, one readable line per search/extract (implemented).
+- ✅ **Multi-key rotation & failover** — `apiKeyRefs` credential-ref ring, rotation on 429/invalid key/insufficient credits, 3-strike cooldown (implemented).
+- ✅ **Footnote citations** — `citeFormat: footnote` numbered source block appended to the answer (implemented).
+- ✅ **Automatic fallback engine** — `fallbackEngine: deepseek` on timeout/network/5xx (implemented).
 
 ## Development
 

@@ -33,6 +33,9 @@ const Config = z.object({
   cacheMaxEntries: z.number().step(1).min(1).max(10000),
   cacheBypassFresh: z.boolean(),
   debug: z.boolean(),
+  apiKeyRefs: z.array(z.string().role('credential-ref')),
+  citeFormat: z.union(['plain', 'footnote']),
+  fallbackEngine: z.union(['none', 'deepseek']),
   numResults: z.number().step(1).min(1).max(20),
   engine: z.union(['tavily', 'deepseek']),
 })
@@ -101,6 +104,12 @@ const cases = [
   ['retry attempts too high', { retryMaxAttempts: 9 }],
   ['engine deepseek valid', { engine: 'deepseek' }],
   ['invalid engine', { engine: 'exa' }],
+  ['cite format valid', { citeFormat: 'footnote' }],
+  ['cite format invalid', { citeFormat: 'bibtex' }],
+  ['fallback engine valid', { fallbackEngine: 'deepseek' }],
+  ['fallback engine invalid', { fallbackEngine: 'searxng' }],
+  ['key refs valid', { apiKeyRefs: ['TAVILY_API_KEY_1', 'TAVILY_API_KEY_2'] }],
+  ['key refs not strings', { apiKeyRefs: [7] }],
   ['invalid timeRange', { timeRange: 'foo' }],
 ]
 for (const [label, value] of cases) {

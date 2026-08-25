@@ -131,6 +131,18 @@ export interface Config {
   cacheBypassFresh?: boolean
   /** Concise per-search debug logging (never the key or raw response bodies). Defaults to false. */
   debug?: boolean
+  /**
+   * Ordered list of additional credential references (e.g. `TAVILY_API_KEY_1`,
+   * `TAVILY_API_KEY_2`) forming the multi-key rotation ring together with
+   * {@link apiKey} and {@link apiKeyEnv}. Refs only — keys stay in the
+   * credentials store / environment. A search rotates through the ring on
+   * key-level failures (429 / invalid key / insufficient credits).
+   */
+  apiKeyRefs?: string[]
+  /** How the answer and sources are formatted for the model: `plain` (default) or `footnote` (numbered citations). */
+  citeFormat?: 'plain' | 'footnote'
+  /** On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search. `none` (default) or `deepseek`. */
+  fallbackEngine?: 'none' | 'deepseek'
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
@@ -169,6 +181,9 @@ export const Config: z<Config> = z.object({
   cacheMaxEntries: z.number().step(1).min(1).max(10000).description('Maximum cached search entries (LRU cap; the oldest entry is evicted past it).'),
   cacheBypassFresh: z.boolean().description('Skip the result cache for recency-sensitive searches (news/finance topic or a time window).'),
   debug: z.boolean().description('Concise per-search debug logging (never the key or raw response bodies).'),
+  apiKeyRefs: z.array(z.string().role('credential-ref')).description('Ordered extra credential references forming the multi-key rotation ring (refs only — keys stay in the credentials store / environment).'),
+  citeFormat: z.union(['plain', 'footnote'] as const).description('How the answer and sources are formatted for the model: plain (Tavily answer alone) or footnote (numbered citation block).'),
+  fallbackEngine: z.union(['none', 'deepseek'] as const).description('On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search instead.'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
   engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
 })
@@ -207,6 +222,22 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
       const ambient = process.env[apiKeyEnv]
       return ambient !== undefined && ambient.length > 0 ? ambient : undefined
     },
+    // The multi-key rotation ring resolves each configured reference in order
+    // through the same credential plane the single key uses.
+    resolveKeyRefs: async (refs) => {
+      const credentials = ctx.get('credentials')
+      const out: Array<string | undefined> = []
+      for (const ref of refs) {
+        const reference = credentialRef(ref)
+        if (credentials !== undefined) {
+          out.push((await credentials.resolve(reference))?.value)
+        } else {
+          const ambient = process.env[ref]
+          out.push(ambient !== undefined && ambient.length > 0 ? ambient : undefined)
+        }
+      }
+      return out
+    },
     // The card's Tavily/DeepSeek switch travels as a normal, readable settings
     // field (`engine`), so the provider just derives it per op.
     resolveEnabled: async () => (effective.engine ?? 'tavily') === 'tavily',
@@ -234,6 +265,9 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
     ...effective.cacheMaxEntries !== undefined ? { cacheMaxEntries: effective.cacheMaxEntries } : {},
     ...effective.cacheBypassFresh !== undefined ? { cacheBypassFresh: effective.cacheBypassFresh } : {},
     ...effective.debug !== undefined ? { debug: effective.debug } : {},
+    ...effective.apiKeyRefs !== undefined ? { apiKeyRefs: effective.apiKeyRefs } : {},
+    ...effective.citeFormat !== undefined ? { citeFormat: effective.citeFormat } : {},
+    ...effective.fallbackEngine !== undefined ? { fallbackEngine: effective.fallbackEngine } : {},
     log: (message: string) => { ctx.logger('dsh-plugin-tavily').info(message) },
   }
 }

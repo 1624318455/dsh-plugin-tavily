@@ -17,6 +17,8 @@ export type TavilyCardLocaleKey =
   | 'tavilyTimeout' | 'tavilyTimeoutHint'
   | 'tavilyDays' | 'tavilyDaysHint'
   | 'tavilyEngine' | 'tavilyEngineHint' | 'engineTavily' | 'engineDeepseek'
+  | 'tavilyCiteFormat' | 'tavilyCiteFormatHint' | 'citeFormatPlain' | 'citeFormatFootnote'
+  | 'tavilyFallbackEngine' | 'tavilyFallbackEngineHint' | 'fallbackNone' | 'fallbackDeepseek'
   | 'wiringTitle' | 'wiringHint'
   | 'advancedTitle'
   | 'searchDepthBasic' | 'searchDepthAdvanced' | 'searchDepthFast' | 'searchDepthUltraFast'
@@ -86,6 +88,14 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyEngineHint: 'Which provider answers web_search. Tavily (default): this plugin, keyless if no key. DeepSeek: the official DeepSeek search — switch back without uninstalling. This plugin is already elected as the web_search provider, so this toggle actually changes the engine (no manual yaml needed).',
   engineTavily: 'Tavily (default)',
   engineDeepseek: 'Official DeepSeek',
+  tavilyCiteFormat: 'Citation format',
+  tavilyCiteFormatHint: 'plain: Tavily’s generated answer alone. footnote: appends a numbered source block ([1] title — url…) so the model can cite by number.',
+  citeFormatPlain: 'plain (answer only)',
+  citeFormatFootnote: 'footnote (numbered sources)',
+  tavilyFallbackEngine: 'Fallback engine',
+  tavilyFallbackEngineHint: 'When Tavily fails with a service-side problem (timeout / network / 5xx), answer via the official DeepSeek search as a last resort. Key-level faults (429/401) never trigger it.',
+  fallbackNone: 'none (default)',
+  fallbackDeepseek: 'DeepSeek (automatic)',
   wiringTitle: 'Tavily is already selected as the web_search provider',
   wiringHint: 'Installing this plugin elects Tavily automatically (web.searchProvider: tavily), so web_search answers through Tavily out of the box. The “Web search engine” switch above then picks Tavily or the official DeepSeek provider. The snippet below is optional — only needed if you later override the provider in yaml by hand.',
   tavilyRetryMaxAttempts: 'Rate-limit retries',
@@ -219,6 +229,14 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyEngineHint: '决定 web_search 由谁应答。Tavily（默认）：本插件，无 Key 走 keyless；DeepSeek：官方 DeepSeek——无需卸载即可切回。本插件已被自动选为 web_search 提供方，因此该开关真正切换引擎（不需要手动改 yaml）。',
   engineTavily: 'Tavily（默认）',
   engineDeepseek: '官方 DeepSeek',
+  tavilyCiteFormat: '引用格式',
+  tavilyCiteFormatHint: 'plain：仅返回 Tavily 生成摘要。footnote：追加编号来源块（[1] 标题 — url…），方便模型按编号引用。',
+  citeFormatPlain: 'plain（仅摘要）',
+  citeFormatFootnote: 'footnote（编号来源）',
+  tavilyFallbackEngine: '兜底引擎',
+  tavilyFallbackEngineHint: '当 Tavily 出现服务侧故障（超时/网络/5xx）时，自动改由官方 DeepSeek 搜索应答。Key 级故障（429/401）不触发兜底。',
+  fallbackNone: 'none（默认）',
+  fallbackDeepseek: 'DeepSeek（自动兜底）',
   wiringTitle: 'Tavily 已被自动选为 web_search 提供方',
   wiringHint: '安装本插件会自动选举 Tavily（web.searchProvider: tavily），因此 web_search 开箱即用 Tavily。上方「网页搜索引擎」开关可切换 Tavily 或官方 DeepSeek。下方片段为可选——仅在日后想手动在 yaml 覆盖提供方时使用。',
   tavilyRetryMaxAttempts: '限流重试次数',
