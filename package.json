@@ -71,6 +71,7 @@
   "scripts": {
     "build": "tsdown --config ./tsdown.config.ts",
     "test": "node tests/smoke.mjs",
+    "test:contract": "node tests/slot-contract-compat.mjs",
     "typecheck": "tsc --noEmit"
   },
   "license": "MIT"
