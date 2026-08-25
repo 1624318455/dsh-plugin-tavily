@@ -66,6 +66,7 @@ jobs:
     name: real profile boot smoke (dsh ${{ matrix.dsh }})
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -83,9 +84,19 @@ jobs:
       - run: pnpm build
       - name: Pack the plugin tarball
         run: pnpm pack --pack-destination "$RUNNER_TEMP"
+      # `npx --package @deepseek-ai/dsh … dsh` hangs on runners (observed
+      # `spawnSync /bin/sh ETIMEDOUT` on both legs of run #1: the add step
+      # never progressed past npx's CLI install). Install the pinned CLI with
+      # pnpm into a scratch prefix and drive its bin directly instead — the
+      # flow validated locally on both dsh versions.
+      - name: Install dsh CLI ${{ matrix.dsh }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dshcli"
+          pnpm --dir "$RUNNER_TEMP/dshcli" init
+          pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
       # Scoped-name pack output, e.g. dsh-external-dsh-plugin-tavily-0.6.1.tgz
       - name: Boot smoke on dsh ${{ matrix.dsh }}
         env:
           PLUGIN_TGZ: ${{ runner.temp }}/dsh-external-dsh-plugin-tavily-0.6.1.tgz
-          DSH_CMD: npx --yes --package @deepseek-ai/dsh@${{ matrix.dsh }} dsh
+          DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: node tests/profile-boot-smoke.mjs
