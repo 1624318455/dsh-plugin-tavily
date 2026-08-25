@@ -24,6 +24,7 @@ import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '@deep
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
+  FirecrawlFetchProvider,
   TavilySearchProvider,
   TavilyExtractProvider,
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -38,8 +39,11 @@ import {
   TAVILY_DEFAULT_TOPIC,
   TAVILY_EXTRACT_PROVIDER_ID,
   TAVILY_PROVIDER_ID,
+  FIRECRAWL_DEFAULT_API_KEY_ENV,
+  FIRECRAWL_DEFAULT_BASE_URL,
+  FIRECRAWL_PROVIDER_ID,
 } from './provider'
-import type { DelegateSearch, TavilySearchProviderOptions } from './provider'
+import type { DelegateSearch, FirecrawlProviderOptions, TavilySearchProviderOptions } from './provider'
 
 export {
   TAVILY_DEFAULT_API_KEY_ENV,
@@ -56,11 +60,15 @@ export {
   TAVILY_DEFAULT_USAGE_PATH,
   TAVILY_EXTRACT_PROVIDER_ID,
   TAVILY_PROVIDER_ID,
+  FIRECRAWL_DEFAULT_API_KEY_ENV,
+  FIRECRAWL_DEFAULT_BASE_URL,
+  FIRECRAWL_PROVIDER_ID,
   TavilySearchProvider,
   TavilyExtractProvider,
+  FirecrawlFetchProvider,
   estimateSearchCredits,
 } from './provider'
-export type { TavilySearchProviderOptions } from './provider'
+export type { FirecrawlProviderOptions, TavilySearchProviderOptions } from './provider'
 export type { TavilyStatus, TavilyStatusCodes } from './types'
 export type { TavilyUsage } from './types'
 
@@ -129,6 +137,8 @@ export interface Config {
   cacheMaxEntries?: number
   /** Skip the result cache for recency-sensitive searches (news/finance topic or a time window). Defaults to true. */
   cacheBypassFresh?: boolean
+  /** Optional JSON file the result cache is persisted to (survives restarts); `~/` expands, relative = cwd. Defaults to unset (disabled). */
+  cacheFile?: string
   /** Concise per-search debug logging (never the key or raw response bodies). Defaults to false. */
   debug?: boolean
   /**
@@ -143,6 +153,12 @@ export interface Config {
   citeFormat?: 'plain' | 'footnote'
   /** On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search. `none` (default) or `deepseek`. */
   fallbackEngine?: 'none' | 'deepseek'
+  /** Optional Firecrawl fetch provider: endpoint base; `/scrape` appended. Defaults to https://api.firecrawl.dev/v1. */
+  firecrawlBaseURL?: string
+  /** Optional Firecrawl literal API key; prefer {@link firecrawlApiKeyEnv}. */
+  firecrawlApiKey?: string
+  /** Firecrawl credential reference resolved for each fetch; defaults to `FIRECRAWL_API_KEY`. */
+  firecrawlApiKeyEnv?: string
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
@@ -180,10 +196,14 @@ export const Config: z<Config> = z.object({
   cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
   cacheMaxEntries: z.number().step(1).min(1).max(10000).description('Maximum cached search entries (LRU cap; the oldest entry is evicted past it).'),
   cacheBypassFresh: z.boolean().description('Skip the result cache for recency-sensitive searches (news/finance topic or a time window).'),
+  cacheFile: z.string().description('Optional JSON file the result cache is persisted to (`~/` expands; relative paths resolve against the working directory); unset/empty disables persistence.'),
   debug: z.boolean().description('Concise per-search debug logging (never the key or raw response bodies).'),
   apiKeyRefs: z.array(z.string().role('credential-ref')).description('Ordered extra credential references forming the multi-key rotation ring (refs only — keys stay in the credentials store / environment).'),
   citeFormat: z.union(['plain', 'footnote'] as const).description('How the answer and sources are formatted for the model: plain (Tavily answer alone) or footnote (numbered citation block).'),
   fallbackEngine: z.union(['none', 'deepseek'] as const).description('On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search instead.'),
+  firecrawlBaseURL: z.string().description('Optional Firecrawl fetch provider endpoint base; `/scrape` is appended.'),
+  firecrawlApiKey: z.string().role('secret').description('Optional Firecrawl literal API key; prefer the firecrawlApiKeyEnv credential reference.'),
+  firecrawlApiKeyEnv: z.string().role('credential-ref').description('Firecrawl credential reference resolved for each fetch (default FIRECRAWL_API_KEY).'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
   engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
 })
@@ -264,6 +284,7 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
     ...effective.cacheTtlSeconds !== undefined ? { cacheTtlMs: effective.cacheTtlSeconds * 1000 } : {},
     ...effective.cacheMaxEntries !== undefined ? { cacheMaxEntries: effective.cacheMaxEntries } : {},
     ...effective.cacheBypassFresh !== undefined ? { cacheBypassFresh: effective.cacheBypassFresh } : {},
+    ...effective.cacheFile !== undefined ? { cacheFile: effective.cacheFile } : {},
     ...effective.debug !== undefined ? { debug: effective.debug } : {},
     ...effective.apiKeyRefs !== undefined ? { apiKeyRefs: effective.apiKeyRefs } : {},
     ...effective.citeFormat !== undefined ? { citeFormat: effective.citeFormat } : {},
@@ -307,6 +328,38 @@ function configuredSearchProviderId(ctx: Context): string | undefined {
   return web.searchProviderId
 }
 
+/**
+ * Project the resolved section into options for the optional Firecrawl fetch
+ * provider. Same priority contract as {@link resolveOptions}: yaml/composition
+ * entry > WebUI section > code defaults. Firecrawl only answers URL retrieval
+ * (the fetch seam); search always stays on Tavily.
+ * @param ctx - plugin context supplying the credential plane.
+ * @param config - the currently authoritative settings-section value.
+ * @param entry - the plugin's composition entry.
+ * @returns options for one Firecrawl fetch.
+ */
+function resolveFirecrawlOptions(ctx: Context, config: Config, entry: Config): FirecrawlProviderOptions {
+  const effective = { ...config, ...definedConfig(entry) }
+  const apiKeyEnv = credentialRef(effective.firecrawlApiKeyEnv ?? FIRECRAWL_DEFAULT_API_KEY_ENV)
+  const literalKey = effective.firecrawlApiKey !== undefined && effective.firecrawlApiKey.length > 0
+    ? effective.firecrawlApiKey
+    : undefined
+  return {
+    ...literalKey === undefined ? {} : { apiKey: literalKey },
+    resolveApiKey: async () => {
+      const credentials = ctx.get('credentials')
+      if (credentials !== undefined) return (await credentials.resolve(apiKeyEnv))?.value
+      const ambient = process.env[apiKeyEnv]
+      return ambient !== undefined && ambient.length > 0 ? ambient : undefined
+    },
+    apiKeyEnv,
+    baseURL: effective.firecrawlBaseURL ?? FIRECRAWL_DEFAULT_BASE_URL,
+    timeout: effective.timeout ?? TAVILY_DEFAULT_TIMEOUT,
+    ...effective.debug !== undefined ? { debug: effective.debug } : {},
+    log: (message: string) => { ctx.logger('dsh-plugin-tavily').info(message) },
+  }
+}
+
 /** Register the Tavily search provider with `ctx.web`. */
 export function apply(ctx: Context, config: Config): void {
   const entry = config
@@ -330,6 +383,11 @@ export function apply(ctx: Context, config: Config): void {
   // it is opt-in via `fetchProvider: tavily-extract` (or DSH_WEB_FETCH_PROVIDER).
   ctx.web.registerFetchProvider(
     new TavilyExtractProvider(() => resolveOptions(ctx, current(), entry)),
+  )
+  // Optional second fetch provider: Firecrawl-backed page retrieval, inert
+  // until `fetchProvider: firecrawl` is selected AND its own key resolves.
+  ctx.web.registerFetchProvider(
+    new FirecrawlFetchProvider(() => resolveFirecrawlOptions(ctx, current(), entry)),
   )
   // Server-side probe so the card can test a stored key (browsers cannot read
   // stored secrets back). POST /api/tavily-probe { apiKey?, clearKey? }.

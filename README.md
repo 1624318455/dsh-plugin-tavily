@@ -18,6 +18,8 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 - **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error, now **classified** (invalid key / insufficient credits / rate limited / service down / timeout / network) with a targeted explanation per case. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
 - **Usage & cost panel**: the card shows a live per-search credit/token estimate for the current settings, plus a `Check usage` button that reads Tavily `GET /usage` (remaining credits, search usage, plan) with the currently entered key. A host-side `usage()` method on the provider exposes the same data where the stored key is available.
 - **Page extraction**: a Tavily Extract-backed fetch provider (`tavily-extract`) reads a full page from a URL and returns it as clean text/html — select it once and URL retrieval is answered by Tavily.
+- **Optional Firecrawl extraction**: an alternative fetch provider (`firecrawl`) scrapes a page via Firecrawl `POST /scrape` (markdown, main content) — selectable when Tavily extracts a page poorly. It registers under its own id and credential (default ref `FIRECRAWL_API_KEY`); search always stays on Tavily. Inert until selected.
+- **Persistent result cache**: `cacheFile` persists the TTL/LRU search cache to a JSON file (survives restarts; `~/` expands, relative paths resolve against the working directory). Best-effort and debounced — a failing disk never breaks a search. Off by default.
 - **Rate-limit retry & cache**: extra attempts after a 429 response honor Tavily's `retry-after` with a bounded backoff, and an optional TTL cache serves identical searches to save credits — LRU-capped (default 200 entries) and, by default, skipped entirely for recency-sensitive searches (news/finance topics or any time window) so a "right now" question never gets a stale snapshot.
 - **Concise debug logging**: an opt-in `debug` switch logs one readable line per search/extract (query excerpt, depth, credits, cache state, duration, classified error) — never the API key or raw response bodies.
 - **Multi-key rotation & failover**: `apiKeyRefs` lists extra credential references (refs only — keys stay in the credentials store/environment) forming a rotation ring with the literal key and `apiKeyEnv`. A search rotates through the ring on key-level failures (429 / invalid key / insufficient credits); a key that fails 3 times in a row enters a 60s cooldown so the healthy keys take over.
@@ -72,6 +74,14 @@ or, in `cordis.patch.yml`:
     searchProvider: tavily
     fetchProvider: tavily-extract
 ```
+
+To use the optional **Firecrawl** page retriever instead (own key required — default credential reference `FIRECRAWL_API_KEY`):
+
+```sh
+export DSH_WEB_FETCH_PROVIDER=firecrawl
+```
+
+or `fetchProvider: firecrawl` in the same `cordis.patch.yml` row. Without a Firecrawl key the provider reports `WEB_PROVIDER_CREDENTIAL_MISSING` on a fetch and stays inert otherwise.
 
 
 
@@ -186,7 +196,11 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `cacheTtlSeconds` | `0` | query-cache TTL in seconds (0 disables) | ✓ |
 | `cacheMaxEntries` | `200` | LRU cap on cached searches (1–10000) | ✓ |
 | `cacheBypassFresh` | `true` | skip the cache for news/finance or time-windowed searches | ✓ |
+| `cacheFile` | unset | JSON file the result cache persists to (survives restarts); unset/empty disables | config only |
 | `debug` | `false` | concise per-search debug logging (never the key/raw bodies) | ✓ |
+| `firecrawlBaseURL` | `https://api.firecrawl.dev/v1` | Firecrawl fetch provider endpoint base (`/scrape` appended) | config only |
+| `firecrawlApiKey` | unset | literal Firecrawl API key; prefer the credential reference | config only |
+| `firecrawlApiKeyEnv` | `FIRECRAWL_API_KEY` | Firecrawl credential reference resolved per fetch | config only |
 | `startDate` | unset | include results after this `YYYY-MM-DD` | ✓ |
 | `endDate` | unset | include results before this `YYYY-MM-DD` | ✓ |
 | `includeImages` | `false` | collect query-related and per-source images | ✓ |
@@ -242,6 +256,10 @@ High-confidence follow-ups identified in the product analysis:
 - ✅ **Multi-key rotation & failover** — `apiKeyRefs` credential-ref ring, rotation on 429/invalid key/insufficient credits, 3-strike cooldown (implemented).
 - ✅ **Footnote citations** — `citeFormat: footnote` numbered source block appended to the answer (implemented).
 - ✅ **Automatic fallback engine** — `fallbackEngine: deepseek` on timeout/network/5xx (implemented).
+- ✅ **Optional Firecrawl extraction** — `firecrawl` fetch provider (`/scrape`, markdown, own credential ref), inert until selected (implemented).
+- ✅ **Persistent result cache** — `cacheFile` JSON persistence across restarts, debounced/best-effort (implemented).
+
+Deferred (deliberately, see the optimization review): **search-then-extract (top-N pages)** would change result semantics (extracted text must be injected into `content`), burn extract credits per URL, and implicitly couple search to full-page retrieval — revisit as a separate opt-in feature if users ask.
 
 ## Development
 

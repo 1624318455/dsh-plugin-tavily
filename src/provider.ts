@@ -17,6 +17,9 @@ import type {
   WebSearchResult,
   WebSearchSource,
 } from '@deepseek-ai/dsh-web'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import type {
   TavilyError,
   TavilyExtractRequest,
@@ -37,6 +40,15 @@ export const TAVILY_PROVIDER_ID = 'tavily'
 
 /** Stable id the Tavily Extract fetch provider registers under. */
 export const TAVILY_EXTRACT_PROVIDER_ID = 'tavily-extract'
+
+/** Stable id the optional Firecrawl fetch provider registers under. */
+export const FIRECRAWL_PROVIDER_ID = 'firecrawl'
+
+/** Default Firecrawl endpoint; `/scrape` is the operation. */
+export const FIRECRAWL_DEFAULT_BASE_URL = 'https://api.firecrawl.dev/v1'
+
+/** Default credential reference resolved for the Firecrawl provider. */
+export const FIRECRAWL_DEFAULT_API_KEY_ENV = 'FIRECRAWL_API_KEY'
 
 /** Default Tavily endpoint; `/search` is the operation. */
 export const TAVILY_DEFAULT_BASE_URL = 'https://api.tavily.com'
@@ -84,14 +96,14 @@ export const TAVILY_DEFAULT_CACHE_MAX_ENTRIES = 200
  */
 export const TAVILY_DEFAULT_CACHE_BYPASS_FRESH = true
 
-/**
- * Consecutive key-level failures (429 / invalid key / insufficient credits)
- * after which a key enters a cooldown so the ring prefers the healthy keys.
- */
+/** Consecutive key-level failures (429 / invalid key / insufficient credits) */
 const KEY_FAILOVER_THRESHOLD = 3
 
 /** Cooldown (ms) a key sits out after reaching the failover threshold. */
 const KEY_COOLDOWN_MS = 60_000
+
+/** Debounce (ms) before the optional persisted cache file is rewritten. */
+const CACHE_PERSIST_DEBOUNCE_MS = 1_500
 
 /** Base delay (ms) for the exponential rate-limit backoff before retrying. */
 const RETRY_BASE_DELAY_MS = 250
@@ -103,7 +115,7 @@ const RETRY_MAX_DELAY_MS = 4_000
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.5.0'
+const USER_AGENT = 'dsh-plugin-tavily/0.6.0'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the
@@ -200,6 +212,13 @@ export interface TavilySearchProviderOptions {
    * or any explicit time window). Defaults to {@link TAVILY_DEFAULT_CACHE_BYPASS_FRESH}.
    */
   cacheBypassFresh?: boolean
+  /**
+   * Optional JSON file the result cache is persisted to (survives restarts).
+   * `~/` is expanded, relative paths resolve against the working directory;
+   * absent/empty disables persistence. Search results are cache data, not
+   * secrets — a file world-readable by the launching user.
+   */
+  cacheFile?: string
   /**
    * Concise per-operation debug logging (query excerpt, credits, cache state,
    * duration, error code+message) through {@link log}. Never logs the key or
@@ -319,12 +338,29 @@ interface SearchStats {
   cache: 'hit' | 'miss' | 'bypassed' | 'disabled'
 }
 
+/** On-disk shape of the optional persisted result cache. */
+interface PersistedCache {
+  entries: Record<string, { expires: number; result: WebSearchResult }>
+}
+
 /** The Tavily-backed search provider; HTTP redirects fail as `WEB_PROVIDER_ERROR`. */
 export class TavilySearchProvider implements WebSearchProvider {
   readonly id = TAVILY_PROVIDER_ID
 
   /** Short-lived in-memory result cache, keyed by a request/options fingerprint. */
   private readonly cache = new Map<string, CacheEntry>()
+
+  /** Persisted-cache destination (from the first op's options); empty disables. */
+  private cacheFile: string | undefined
+
+  /** Whether the cache file was already loaded into {@link cache}. */
+  private cacheLoaded = false
+
+  /** Debounced persist timer for the cache file. */
+  private persistTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Whether the cache holds changes the debounced persist must write. */
+  private cacheDirty = false
 
   /** Per-key failover state: consecutive failures and the cooldown expiry. */
   private readonly keyStates = new Map<string, { failures: number; cooldownUntil: number }>()
@@ -783,6 +819,7 @@ export class TavilySearchProvider implements WebSearchProvider {
       ? this.cacheFingerprint(request, options, maxResults, apiKey)
       : undefined
     if (cacheKey !== undefined) {
+      this.loadPersistedCache(options)
       const hit = this.cache.get(cacheKey)
       if (hit !== undefined && hit.expires > Date.now()) {
         // Move-to-front so the LRU eviction below drops the truly oldest entry.
@@ -861,6 +898,7 @@ export class TavilySearchProvider implements WebSearchProvider {
         if (cacheEnabled && cacheKey !== undefined) {
           this.cache.set(cacheKey, { expires: Date.now() + cacheTtl, result })
           this.evictCacheTo(options)
+          this.schedulePersist()
           stats.cache = 'miss'
         }
         return result
@@ -878,6 +916,61 @@ export class TavilySearchProvider implements WebSearchProvider {
       if (oldest === undefined) break
       this.cache.delete(oldest)
     }
+    this.schedulePersist()
+  }
+
+  /**
+   * Load the optional persisted cache file once, honoring expiry and the LRU
+   * cap. A missing or corrupt file starts the cache empty — persistence is
+   * best-effort and never fails a search.
+   * @param options - the operation's option snapshot (carries `cacheFile`).
+   */
+  private loadPersistedCache(options: TavilySearchProviderOptions): void {
+    const cacheFile = options.cacheFile
+    if (cacheFile === undefined || cacheFile.length === 0 || this.cacheLoaded) return
+    this.cacheLoaded = true
+    if (this.cacheFile === undefined) this.cacheFile = cacheFile
+    try {
+      const text = readFileSync(expandHome(cacheFile), 'utf8')
+      const parsed = JSON.parse(text) as PersistedCache
+      const max = Math.max(1, options.cacheMaxEntries ?? TAVILY_DEFAULT_CACHE_MAX_ENTRIES)
+      const now = Date.now()
+      for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
+        if (this.cache.size >= max) break
+        if (entry.expires > now) this.cache.set(key, { expires: entry.expires, result: entry.result })
+      }
+      debugLog(options, `cache loaded ${this.cache.size} entries from ${cacheFile}`)
+    } catch {
+      // Missing/corrupt file: start empty; the next write recreates it.
+    }
+  }
+
+  /**
+   * Debounced persist of the in-memory cache to its optional JSON file. The
+   * write is best-effort: a failing disk must never break a search.
+   */
+  private schedulePersist(): void {
+    if (this.cacheFile === undefined || this.cacheFile.length === 0) return
+    this.cacheDirty = true
+    if (this.persistTimer !== undefined) return
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined
+      if (!this.cacheDirty) return
+      this.cacheDirty = false
+      try {
+        const entries: PersistedCache['entries'] = {}
+        const now = Date.now()
+        for (const [key, entry] of this.cache) {
+          if (entry.expires > now) entries[key] = { expires: entry.expires, result: entry.result }
+        }
+        const file = expandHome(this.cacheFile!)
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, JSON.stringify({ entries }), 'utf8')
+        debugLog(this.resolveOptions(), `cache persisted ${Object.keys(entries).length} entries to ${file}`)
+      } catch (error) {
+        debugLog(this.resolveOptions(), `cache persist failed: ${String(error)}`)
+      }
+    }, CACHE_PERSIST_DEBOUNCE_MS)
   }
 }
 
@@ -926,7 +1019,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
       })
     } catch (error: unknown) {
       debugLog(options, `extract ${request.url} failed: ${describeSearchError(error)}`)
-      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+      throw classifiedFetchError(error, signal, timeoutSignal, options.timeout, 'Tavily extract')
     }
 
     if (!response.ok) {
@@ -961,9 +1054,151 @@ export class TavilyExtractProvider implements WebFetchProvider {
       }
     } catch (error: unknown) {
       debugLog(options, `extract ${request.url} failed: ${describeSearchError(error)}`)
-      throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+      throw classifiedFetchError(error, signal, timeoutSignal, options.timeout, 'Tavily extract')
     }
   }
+}
+
+/** Resolved options for the optional Firecrawl fetch provider. */
+export interface FirecrawlProviderOptions {
+  /** Literal Firecrawl API key; prefer {@link resolveApiKey}. */
+  apiKey?: string
+  /** Resolve the operation's Firecrawl key (credentials service / environment). */
+  resolveApiKey?: () => Promise<string | undefined>
+  /** Credential reference named in diagnostics; defaults to `FIRECRAWL_API_KEY`. */
+  apiKeyEnv?: string
+  /** Endpoint base; `/scrape` is appended. Defaults to https://api.firecrawl.dev/v1. */
+  baseURL?: string
+  /** Request timeout in milliseconds. */
+  timeout?: number
+  /** Concise debug logging (never the key or raw bodies). */
+  debug?: boolean
+  /** Sink for one concise debug line; only called while `debug` is on. */
+  log?: (message: string) => void
+}
+
+/** Firecrawl's `POST /scrape` success envelope (best-effort shape). */
+interface FirecrawlScrapeResponse {
+  success?: boolean
+  data?: { markdown?: string; content?: string }
+  error?: string
+}
+
+/**
+ * A `WebFetchProvider` backed by Firecrawl's `POST /scrape` endpoint — an
+ * optional alternative to {@link TavilyExtractProvider} for pages Tavily
+ * extracts poorly. It registers under a distinct fetch-provider id
+ * (`firecrawl`) and stays inert until selected via
+ * `fetchProvider: firecrawl` (or `DSH_WEB_FETCH_PROVIDER=firecrawl`) with its
+ * own credential (default reference `FIRECRAWL_API_KEY`). Search always stays
+ * on Tavily; Firecrawl only ever answers URL retrieval.
+ */
+export class FirecrawlFetchProvider implements WebFetchProvider {
+  readonly id = FIRECRAWL_PROVIDER_ID
+
+  /**
+   * @param resolveOptions - thunk producing one operation's Firecrawl options.
+   */
+  constructor(private readonly resolveOptions: () => FirecrawlProviderOptions) {}
+
+  available(): boolean {
+    const options = this.resolveOptions()
+    return ((options.apiKey?.length ?? 0) > 0 || options.resolveApiKey !== undefined)
+      && isValidBaseUrl(options.baseURL ?? FIRECRAWL_DEFAULT_BASE_URL)
+      && (options.timeout === undefined || options.timeout > 0)
+  }
+
+  async fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult> {
+    const options = this.resolveOptions()
+    const started = Date.now()
+    const baseURL = options.baseURL ?? FIRECRAWL_DEFAULT_BASE_URL
+    const timeout = options.timeout ?? TAVILY_DEFAULT_TIMEOUT
+    const apiKey = await resolveFirecrawlApiKey(options, signal)
+    const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, timeout)
+
+    let response: Response
+    try {
+      response = await fetch(`${baseURL}/scrape`, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'authorization': `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          'accept': 'application/json',
+          'user-agent': USER_AGENT,
+        },
+        body: JSON.stringify({
+          url: request.url,
+          formats: ['markdown'],
+          onlyMainContent: true,
+        }),
+        ...requestSignal !== undefined ? { signal: requestSignal } : {},
+      })
+    } catch (error: unknown) {
+      debugLog(options, `firecrawl ${request.url} failed: ${describeSearchError(error)}`)
+      throw classifiedFetchError(error, signal, timeoutSignal, timeout, 'Firecrawl fetch')
+    }
+
+    if (!response.ok) {
+      let message = `Firecrawl scrape API error (HTTP ${response.status})`
+      try {
+        const parsed = await response.json() as FirecrawlScrapeResponse
+        if (parsed.error !== undefined && parsed.error.length > 0) message = parsed.error
+      } catch (error: unknown) {
+        if (timeoutSignal?.aborted === true) {
+          throw new WebError(`Firecrawl fetch timed out after ${timeout}ms`, 'WEB_PROVIDER_ERROR', { cause: error })
+        }
+        if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      }
+      debugLog(options, `firecrawl ${request.url} failed: ${message}`)
+      throw new WebError(message, 'WEB_PROVIDER_ERROR')
+    }
+
+    try {
+      const payload = await response.json() as FirecrawlScrapeResponse
+      if (payload.success === false || (payload.error !== undefined && payload.error.length > 0)) {
+        throw new WebError(payload.error ?? 'Firecrawl scrape failed', 'WEB_PROVIDER_ERROR')
+      }
+      const content = payload.data?.markdown ?? payload.data?.content ?? ''
+      debugLog(options, `firecrawl ${request.url} ${content.length}b ${Date.now() - started}ms`)
+      return {
+        url: response.url === '' ? request.url : response.url,
+        statusCode: response.status,
+        body: classifyFetchBody(content),
+        truncated: false,
+      }
+    } catch (error: unknown) {
+      if (error instanceof WebError) throw error
+      debugLog(options, `firecrawl ${request.url} failed: ${describeSearchError(error)}`)
+      throw classifiedFetchError(error, signal, timeoutSignal, timeout, 'Firecrawl fetch')
+    }
+  }
+}
+
+/**
+ * Resolve one operation's Firecrawl key without retaining it on the provider.
+ * @param options - the caller's snapshot.
+ * @param signal - abort signal for the surrounding operation.
+ * @returns the resolved key.
+ */
+function resolveFirecrawlApiKey(options: FirecrawlProviderOptions, signal?: AbortSignal): Promise<string> {
+  throwIfSearchAborted(signal)
+  if (options.apiKey !== undefined && options.apiKey.length > 0) return Promise.resolve(options.apiKey)
+  return abortable(options.resolveApiKey?.() ?? Promise.resolve(undefined), signal).then(
+    (resolved) => {
+      if (resolved !== undefined && resolved.length > 0) return resolved
+      const ref = options.apiKeyEnv ?? FIRECRAWL_DEFAULT_API_KEY_ENV
+      throw new WebError(
+        `Firecrawl fetch has no API key for "${ref}"; store it through the credentials service`
+        + ' or export it in the launching environment, or provide a literal "firecrawlApiKey"',
+        'WEB_PROVIDER_CREDENTIAL_MISSING',
+      )
+    },
+    (error: unknown) => {
+      if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
+      throw new WebError(`Firecrawl fetch credential resolution failed: ${String(error)}`, 'WEB_PROVIDER_ERROR', { cause: error })
+    },
+  )
 }
 
 /**
@@ -1050,6 +1285,11 @@ function isPositiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0
 }
 
+/** Expand a leading `~/` in a user-supplied path to the home directory. */
+function expandHome(path: string): string {
+  return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path
+}
+
 /**
  * Classify an HTTP failure into the machine-routable status taxonomy. An
  * auth error (401/403) is refined by the body message: Tavily reports
@@ -1123,8 +1363,14 @@ function isFreshSensitive(options: TavilySearchProviderOptions): boolean {
     || options.endDate !== undefined
 }
 
+/** Minimal option shape the debug helpers read (both providers satisfy it). */
+interface DebuggableOptions {
+  debug?: boolean
+  log?: (message: string) => void
+}
+
 /** Emit one concise debug line only while the operation's debug flag is on. */
-function debugLog(options: TavilySearchProviderOptions, message: string): void {
+function debugLog(options: DebuggableOptions, message: string): void {
   if (options.debug === true) options.log?.(message)
 }
 
@@ -1172,11 +1418,26 @@ function classifiedSearchError(
   timeoutSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
 ): WebError {
+  return classifiedFetchError(error, signal, timeoutSignal, timeoutMs, 'Tavily search')
+}
+
+/**
+ * Classify one fetch/JSON failure for any provider into the shared taxonomy,
+ * carrying the machine-routable code on the error.
+ * @param label - the provider operation name used in the message, e.g. `Tavily search`.
+ */
+function classifiedFetchError(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+  label: string,
+): WebError {
   if (timeoutSignal?.aborted === true) {
-    return tavilyWebError('timeout', `Tavily search timed out after ${timeoutMs}ms`, { cause: error })
+    return tavilyWebError('timeout', `${label} timed out after ${timeoutMs}ms`, { cause: error })
   }
   if (signal?.aborted === true || isAbortError(error)) return searchAborted(signal, error)
-  return tavilyWebError('network', `Tavily search request failed: ${String(error)}`, { cause: error })
+  return tavilyWebError('network', `${label} request failed: ${String(error)}`, { cause: error })
 }
 
 /**

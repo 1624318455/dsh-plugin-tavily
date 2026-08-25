@@ -32,10 +32,14 @@ const Config = z.object({
   cacheTtlSeconds: z.number().step(1).min(0).max(3600),
   cacheMaxEntries: z.number().step(1).min(1).max(10000),
   cacheBypassFresh: z.boolean(),
+  cacheFile: z.string(),
   debug: z.boolean(),
   apiKeyRefs: z.array(z.string().role('credential-ref')),
   citeFormat: z.union(['plain', 'footnote']),
   fallbackEngine: z.union(['none', 'deepseek']),
+  firecrawlBaseURL: z.string(),
+  firecrawlApiKey: z.string().role('secret'),
+  firecrawlApiKeyEnv: z.string().role('credential-ref'),
   numResults: z.number().step(1).min(1).max(20),
   engine: z.union(['tavily', 'deepseek']),
 })
@@ -110,6 +114,8 @@ const cases = [
   ['fallback engine invalid', { fallbackEngine: 'searxng' }],
   ['key refs valid', { apiKeyRefs: ['TAVILY_API_KEY_1', 'TAVILY_API_KEY_2'] }],
   ['key refs not strings', { apiKeyRefs: [7] }],
+  ['firecrawl config valid', { firecrawlBaseURL: 'https://api.firecrawl.dev/v1', firecrawlApiKey: 'fc-x', firecrawlApiKeyEnv: 'FIRECRAWL_API_KEY' }],
+  ['cache file valid', { cacheFile: '~/.dsh/cache/tavily.json' }],
   ['invalid timeRange', { timeRange: 'foo' }],
 ]
 for (const [label, value] of cases) {

@@ -18,6 +18,8 @@
 - **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息，报错已**分类**（Key 无效 / 余额不足 / 限流 / 服务宕机 / 超时 / 网络）并给出对应解决文案。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
 - **用量与成本面板**：卡片实时显示当前设置的每次搜索积分/token 预估，并提供「检查用量」按钮读取 Tavily `GET /usage`（剩余额度、搜索用量、套餐）。提供方另有宿主侧 `usage()` 方法可在已存密钥可用时读取同一数据。
 - **页面抓取**：基于 Tavily Extract 的 fetch 提供方（`tavily-extract`）从 URL 读取整页内容并返回干净的 text/html —— 选择一次后，URL 检索即由 Tavily 应答。
+- **可选 Firecrawl 抓取**：另一个 fetch 提供方（`firecrawl`）通过 Firecrawl `POST /scrape`（markdown、正文为主）抓取页面，适合 Tavily 提取质量差的页面。它有独立 id 与独立凭据（默认引用 `FIRECRAWL_API_KEY`）；搜索始终走 Tavily，Firecrawl 只负责 URL 检索。未选择时保持惰性。
+- **持久化结果缓存**：`cacheFile` 把 TTL/LRU 搜索缓存持久化到 JSON 文件（重启不丢；支持 `~/`，相对路径按工作目录解析）。防抖、尽力而为——磁盘故障绝不阻断搜索。默认关闭。
 - **限流重试与缓存**：收到 429 后按 `retry-after` 做有界退避重试；可选 TTL 缓存让相同查询直接命中以节省额度——缓存带 **LRU 上限**（默认 200 条），且默认对**时效敏感查询**（news/finance 主题或任意时间窗口）完全跳过，「现在」类问题绝不命中陈旧快照。
 - **精简调试日志**：可选 `debug` 开关，每次搜索/抓取输出一行可读日志（查询节选、深度、积分、缓存状态、耗时、分类错误）——绝不记录密钥或原始响应体。
 - **多密钥轮换 & 故障转移**：`apiKeyRefs` 列出额外凭据引用（只存引用名，密钥仍在凭据库/环境变量中），与字面量 `apiKey`、`apiKeyEnv` 组成轮换环。搜索在 Key 级故障（429 / Key 无效 / 余额不足）时自动切到环中下一把 Key；连续失败 3 次的 Key 进入 60 秒冷却，保证健康 Key 接管。
@@ -72,6 +74,14 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
     searchProvider: tavily
     fetchProvider: tavily-extract
 ```
+
+如需改用可选的 **Firecrawl** 页面抓取（需要自己的 Key，默认凭据引用 `FIRECRAWL_API_KEY`）：
+
+```sh
+export DSH_WEB_FETCH_PROVIDER=firecrawl
+```
+
+或把上面同一行的 `fetchProvider` 改为 `firecrawl`。未配置 Firecrawl Key 时，抓取会报 `WEB_PROVIDER_CREDENTIAL_MISSING`，其余时间保持惰性。
 
 
 
@@ -186,7 +196,11 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `cacheTtlSeconds` | `0` | 查询缓存时长（秒），0 关闭 | ✓ |
 | `cacheMaxEntries` | `200` | 缓存条目的 LRU 上限（1–10000） | ✓ |
 | `cacheBypassFresh` | `true` | 时效敏感查询（news/finance 或带时间窗口）跳过缓存 | ✓ |
+| `cacheFile` | （未设） | 把结果缓存持久化到的 JSON 文件（重启不丢）；未设/空则关闭 | 仅配置 |
 | `debug` | `false` | 精简的每次搜索调试日志（绝不记录密钥/原始响应） | ✓ |
+| `firecrawlBaseURL` | `https://api.firecrawl.dev/v1` | Firecrawl fetch 提供方接口地址（追加 `/scrape`） | 仅配置 |
+| `firecrawlApiKey` | （未设） | Firecrawl 字面量 Key；优先用凭据引用 | 仅配置 |
+| `firecrawlApiKeyEnv` | `FIRECRAWL_API_KEY` | Firecrawl 每次抓取解析的凭据引用 | 仅配置 |
 | `startDate` | （未设） | 只返回该 `YYYY-MM-DD` 之后的结果 | ✓ |
 | `endDate` | （未设） | 只返回该 `YYYY-MM-DD` 之前的结果 | ✓ |
 | `includeImages` | `false` | 收集查询相关及来源图片 | ✓ |
@@ -242,6 +256,10 @@ Tavily 的扁平 `results[]` 映射为规范化的 `WebSearchSource`：`url` ←
 - ✅ **多密钥轮换 & 故障转移** —— `apiKeyRefs` 凭据引用环，429/Key 无效/余额不足自动轮换，3 次失败进冷却（已实现）。
 - ✅ **脚注式引用（证据溯源）** —— `citeFormat: footnote` 在摘要后追加编号来源块（已实现）。
 - ✅ **自动兜底引擎** —— `fallbackEngine: deepseek` 在超时/网络/5xx 时自动兜底（已实现）。
+- ✅ **可选 Firecrawl 抓取** —— `firecrawl` fetch 提供方（`/scrape`、markdown、独立凭据引用），未选择时惰性（已实现）。
+- ✅ **持久化结果缓存** —— `cacheFile` JSON 落盘、重启不丢，防抖且尽力而为（已实现）。
+
+已暂缓（刻意为之，见优化评审）：**搜索后批量 extract（top-N 页面）** 会改变结果语义（抓取文本必须注入 `content`）、按 URL 消耗 extract 额度，并把搜索与整页抓取隐式耦合——如需可另立可选开关再议。
 
 ## 开发
 
