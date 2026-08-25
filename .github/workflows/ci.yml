@@ -101,5 +101,5 @@ jobs:
         env:
           DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: |
-          PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
+          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
           node tests/profile-boot-smoke.mjs
