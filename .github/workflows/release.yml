@@ -30,7 +30,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,6 +59,42 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # Strict quality gate: never publish until the CI run for THIS commit
+      # finished green. Branch protection would additionally stop red from
+      # landing on main (that forces a PR flow); this gate works with direct
+      # pushes and sits one layer downstream — the release always waits for
+      # the exact commit's CI result, whatever upstream policy is in place.
+      - name: Wait for CI to pass
+        if: steps.released.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          SHA="$GITHUB_SHA"
+          # 1) Let the ci.yml run for this commit appear (runner/queue lag).
+          RUN_ID=""
+          for i in $(seq 1 60); do
+            RUN_ID=$(gh run list --workflow ci.yml --commit "$SHA" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty' || true)
+            [ -n "$RUN_ID" ] && break
+            sleep 10
+          done
+          [ -n "$RUN_ID" ] || { echo "::error::no ci.yml run found for $SHA within 10 minutes"; exit 1; }
+          # 2) Wait for it to reach a terminal conclusion.
+          CONCLUSION=""
+          for i in $(seq 1 120); do
+            CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion' || true)
+            case "$CONCLUSION" in
+              success|failure|cancelled|timed_out|action_required|stale|neutral) break ;;
+            esac
+            sleep 10
+          done
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI run $RUN_ID did not pass (conclusion: ${CONCLUSION:-unknown/not finished within 20 minutes}) — release aborted"
+            exit 1
+          fi
+          echo "CI run $RUN_ID passed — proceeding with release"
 
       - name: Install, build, pack
         if: steps.released.outputs.exists == 'false'

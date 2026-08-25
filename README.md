@@ -285,14 +285,15 @@ cores (`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`) and boots a real dsh profile
 per release (`0.1.0-rc.6` / `0.1.1-rc.2`) to verify the served bundle.
 
 The slot-contract section above is pinned by `pnpm run test:contract` and the
-CI matrix. **Releases are fully automated**: bump `package.json` version and
-push to `main` — the `Release` workflow (`.github/workflows/release.yml`)
-tags `v<version>` and publishes a GitHub Release with generated changelog and
-the packed tarball. Cadence is SemVer-driven: **patch** for bug fixes
-(especially issue-anchored ones — someone is waiting), **minor** for feature
-batches, **major** for breaking changes. The `#main` install path delivers
-every merged commit regardless; tags are the immutable "recommended version"
-snapshots.
+CI matrix. **Releases are fully automated and CI-gated**: bump `package.json`
+version and push to `main` — the `Release` workflow
+(`.github/workflows/release.yml`) waits for that commit's CI run to finish
+green, then tags `v<version>` and publishes a GitHub Release with generated
+changelog and the packed tarball. Cadence is SemVer-driven: **patch** for bug
+fixes (especially issue-anchored ones — someone is waiting), **minor** for
+feature batches, **major** for breaking changes. The `#main` install path
+delivers every merged commit regardless; tags are the immutable "recommended
+version" snapshots.
 
 `lib/` is committed so the plugin installs without a build step (no `prepare` script, no pnpm build-script allowlisting). The `@deepseek-ai/*` seam and framework packages are **externalized** — the harness provides them at runtime, declared as `peerDependencies`. The browser bundle (`lib/client.cjs`) is a CJS module-loader factory: it `require()`s only the client module table's platform packages and inlines the plugin's own card code, so it needs no extra install-time resolution. `@deepseek-ai/dsh-base` is a devDependency only, so the smoke test can resolve the harness runtime closure.
 

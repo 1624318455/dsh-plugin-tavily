@@ -275,7 +275,7 @@ node tests/profile-boot-smoke.mjs   # 安装→服务连通冒烟：需要 PLUGI
 
 `settings.plugin.item` 插槽契约在不同 DSH 发布版之间发生过漂移——`0.1.0-rc.6` 声明为 **list** 插槽（注册要求 `id`），而 `0.1.1-rc.x` 声明为 **keyed**（注册要求 `key`）。卡片注册**同时携带** `key` 与 `id`（外加 list 侧 `order`），因此同一份注册可被所有已发布运行时接受。`pnpm run test:contract` 会解析产物 `lib/client.cjs`，把其中的注册形状喂给真实 `SlotCore` 在两种声明形态下验证；CI 矩阵（`.github/workflows/ci.yml`）还会针对已发布的 `dsh-client-ui-slots` 核心（`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`）重跑，并按发布版（`0.1.0-rc.6` / `0.1.1-rc.2`）各启动一次真实 dsh profile 验证实际服务的 bundle。
 
-**发布完全自动化**：改 `package.json` 版本号并推送到 `main`，`Release` 工作流（`.github/workflows/release.yml`）会自动打 `v<版本>` tag 并发布 GitHub Release（自动生成变更记录 + 打包好的 tarball 附件）。节奏由 SemVer 决定：**patch** 修 bug（尤其是被 issue 锚定的修复——有人在等，如本次 settings.plugin.item 修复的 v0.6.1）、**minor** 一批功能落地、**major** 破坏性变更。`#main` 安装路径本来就会拿到每个合入的提交；tag 是"推荐版本"的不可变快照。
+**发布完全自动化且经 CI 门禁**：改 `package.json` 版本号并推送到 `main`，`Release` 工作流（`.github/workflows/release.yml`）会先等待该提交的 CI 全绿，随后自动打 `v<版本>` tag 并发布 GitHub Release（自动生成变更记录 + 打包好的 tarball 附件）。节奏由 SemVer 决定：**patch** 修 bug（尤其是被 issue 锚定的修复——有人在等，如本次 settings.plugin.item 修复的 v0.6.1）、**minor** 一批功能落地、**major** 破坏性变更。`#main` 安装路径本来就会拿到每个合入的提交；tag 是"推荐版本"的不可变快照。
 
 `lib/` 提交入库，插件安装时无需构建步骤（无 `prepare` 脚本，不需要 pnpm 构建脚本白名单）。`@deepseek-ai/*` 的 seam 与框架包**外部化** —— 由 harness 在运行时提供，声明为 `peerDependencies`。浏览器 bundle（`lib/client.cjs`）是 CJS 模块加载器工厂：只 `require()` 客户端模块表中的平台包，插件自身卡片代码内联其中，安装时无需额外解析。`@deepseek-ai/dsh-base` 只是 devDependency，供冒烟测试解析 harness 运行时闭包。
 
