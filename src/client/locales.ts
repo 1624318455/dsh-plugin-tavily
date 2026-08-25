@@ -23,6 +23,9 @@ export type TavilyCardLocaleKey =
   | 'topicGeneral' | 'topicNews' | 'topicFinance'
   | 'tavilyRetryMaxAttempts' | 'tavilyRetryMaxAttemptsHint'
   | 'tavilyCacheTtl' | 'tavilyCacheTtlHint'
+  | 'tavilyCacheMaxEntries' | 'tavilyCacheMaxEntriesHint'
+  | 'tavilyCacheBypassFresh' | 'tavilyCacheBypassFreshHint'
+  | 'tavilyDebug' | 'tavilyDebugHint'
   | 'tavilyChunksPerSource' | 'tavilyChunksPerSourceHint'
   | 'tavilyTimeRange' | 'tavilyTimeRangeHint'
   | 'tavilyStartDate' | 'tavilyStartDateHint'
@@ -38,6 +41,13 @@ export type TavilyCardLocaleKey =
   | 'testApi' | 'testingApi' | 'testApiHint' | 'testApiNeedKey' | 'testApiKeyConfiguredNeedReentry' | 'testApiSuccess' | 'testApiFailed'
   | 'usageEstimateLabel' | 'usageEstimateCredits' | 'checkUsage' | 'checkingUsage' | 'checkUsageHint'
   | 'usageResultLabel' | 'usageResultOf' | 'usageResultSearch' | 'usageUnlimited' | 'usageFailed'
+  | 'errorInvalidKey' | 'errorInsufficientCredits' | 'errorRateLimited'
+  | 'errorServerDown' | 'errorTimeout' | 'errorNetwork' | 'errorHttp' | 'errorOther'
+  | 'presetLabel' | 'presetPlaceholder' | 'presetHint'
+  | 'presetDeepResearch' | 'presetQuickSummary' | 'presetNewsLive'
+  | 'statusIdle' | 'statusChecking' | 'statusCheckingShort' | 'statusOk' | 'statusLow'
+  | 'statusError' | 'statusNoKey' | 'statusRefresh' | 'statusHint'
+  | 'statusRemaining' | 'statusOf' | 'statusFailed'
   | 'overridden' | 'configCovered' | 'reset' | 'readOnly' | 'expand' | 'collapse'
   | 'save' | 'saving' | 'discard' | 'unsaved' | 'saveFailed' | 'invalidNumber' | 'invalidList'
 
@@ -82,6 +92,12 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   tavilyRetryMaxAttemptsHint: 'Extra attempts after a 429 response (0–5); waits honor retry-after with a bounded backoff.',
   tavilyCacheTtl: 'Cache TTL (seconds)',
   tavilyCacheTtlHint: 'Cache identical searches to save credits; 0 disables (0–3600).',
+  tavilyCacheMaxEntries: 'Cache max entries',
+  tavilyCacheMaxEntriesHint: 'Maximum cached searches (LRU cap); the oldest entry evicts past this (1–10000, default 200).',
+  tavilyCacheBypassFresh: 'Skip cache for fresh queries',
+  tavilyCacheBypassFreshHint: 'Do not cache news/finance searches or searches with a time window, so a “right now” question never gets a stale snapshot.',
+  tavilyDebug: 'Debug logging',
+  tavilyDebugHint: 'Log one concise line per search/extract (query excerpt, credits, cache state, duration, errors). Never logs keys or raw responses.',
   advancedTitle: '🔧 Advanced Tavily request parameters',
   searchDepthBasic: 'basic (balanced)',
   searchDepthAdvanced: 'advanced (deep, 2 credits)',
@@ -134,6 +150,32 @@ export const en: Record<TavilyCardLocaleKey, string> = {
   usageResultSearch: ' · ',
   usageUnlimited: 'unlimited',
   usageFailed: 'Usage check failed:',
+  errorInvalidKey: 'Invalid API key — check the key, or create a new one on the Tavily dashboard.',
+  errorInsufficientCredits: 'Insufficient credits — top up on the Tavily dashboard, or clear the key to run keyless.',
+  errorRateLimited: 'Rate limited — wait a moment and retry; repeating 429s mean requests are too frequent.',
+  errorServerDown: 'Tavily service error — wait and retry; if it persists, the service may be down.',
+  errorTimeout: 'Request timed out — check the base URL or raise the request timeout.',
+  errorNetwork: 'Network error — check the base URL and your connection to Tavily.',
+  errorHttp: 'Tavily returned an unexpected HTTP error.',
+  errorOther: 'Unexpected failure.',
+  presetLabel: 'Parameter preset',
+  presetPlaceholder: 'Choose a template…',
+  presetHint: 'One click stages several advanced parameters (config-covered fields are left alone); press Save to apply.',
+  presetDeepResearch: 'Deep research',
+  presetQuickSummary: 'Quick summary',
+  presetNewsLive: 'Live news',
+  statusIdle: 'Status not checked',
+  statusChecking: 'Checking status…',
+  statusCheckingShort: 'Checking…',
+  statusOk: '✓ Tavily ready',
+  statusLow: '⚠ Credits low',
+  statusError: '✗ API error',
+  statusNoKey: 'No API key configured',
+  statusRefresh: 'Refresh',
+  statusHint: 'Shows the stored key’s credit/connectivity status (host-checked, no search credit cost).',
+  statusRemaining: 'Remaining: ',
+  statusOf: ' / ',
+  statusFailed: 'Status check failed:',
   overridden: 'Overridden',
   configCovered: 'Covered by config file; edit the yaml to change.',
   reset: 'Reset to default',
@@ -183,6 +225,12 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   tavilyRetryMaxAttemptsHint: '收到 429 后的额外重试次数（0–5）；等待会遵循 retry-after 并做有界退避。',
   tavilyCacheTtl: '缓存时长（秒）',
   tavilyCacheTtlHint: '缓存相同的查询以节省额度；0 表示关闭（0–3600）。',
+  tavilyCacheMaxEntries: '缓存条目上限',
+  tavilyCacheMaxEntriesHint: '最多缓存的搜索条数（LRU 上限）；超出后淘汰最旧条目（1–10000，默认 200）。',
+  tavilyCacheBypassFresh: '时效性查询跳过缓存',
+  tavilyCacheBypassFreshHint: '不缓存 news/finance 主题或带时间窗口的搜索，保证“当前”问题不会命中陈旧快照。',
+  tavilyDebug: '调试日志',
+  tavilyDebugHint: '每次搜索/抓取输出一行精简日志（查询节选、积分、缓存命中、耗时、错误）。绝不记录密钥或原始响应。',
   advancedTitle: '🔧 高级 Tavily 请求参数',
   searchDepthBasic: 'basic（均衡）',
   searchDepthAdvanced: 'advanced（深度，2 积分）',
@@ -235,6 +283,32 @@ export const zh: Record<TavilyCardLocaleKey, string> = {
   usageResultSearch: ' · ',
   usageUnlimited: '不限',
   usageFailed: '用量检查失败：',
+  errorInvalidKey: 'API Key 无效——请检查密钥，或在 Tavily 控制台重新创建。',
+  errorInsufficientCredits: '额度不足——请在 Tavily 控制台充值，或清空 Key 使用 keyless 模式。',
+  errorRateLimited: '请求被限流——请稍候重试；频繁 429 说明请求过于密集。',
+  errorServerDown: 'Tavily 服务异常——请稍后重试；若持续失败可能是服务故障。',
+  errorTimeout: '请求超时——请检查 Base URL 或调大请求超时时间。',
+  errorNetwork: '网络错误——请检查 Base URL 及与 Tavily 的连接。',
+  errorHttp: 'Tavily 返回了意外的 HTTP 错误。',
+  errorOther: '未知错误。',
+  presetLabel: '参数预设',
+  presetPlaceholder: '选择一个模板…',
+  presetHint: '一键暂存多组高级参数（被配置文件覆盖的字段不动）；点击「保存」后生效。',
+  presetDeepResearch: '深度研究',
+  presetQuickSummary: '快速摘要',
+  presetNewsLive: '新闻实时',
+  statusIdle: '尚未检查状态',
+  statusChecking: '正在检查状态…',
+  statusCheckingShort: '检查中…',
+  statusOk: '✓ Tavily 正常',
+  statusLow: '⚠ 额度不足',
+  statusError: '✗ API 错误',
+  statusNoKey: '未配置 API Key',
+  statusRefresh: '刷新',
+  statusHint: '显示已保存密钥的额度/连接状态（由服务端检查，不消耗搜索额度）。',
+  statusRemaining: '剩余：',
+  statusOf: ' / ',
+  statusFailed: '状态检查失败：',
   overridden: '已覆盖',
   configCovered: '该参数已被配置文件覆盖，请修改 yaml。',
   reset: '恢复默认',

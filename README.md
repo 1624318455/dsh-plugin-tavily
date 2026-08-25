@@ -11,12 +11,15 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 - **Install-and-use (no manual config)**: installing this plugin **auto-selects Tavily as the `web_search` provider** via its `cordis.patch.yml`. Paste a key in the card and search — no yaml or `DSH_WEB_SEARCH_PROVIDER` edits required.
 - **Tavily/DeepSeek engine switch**: a GUI switch answers `web_search` with Tavily (default; keyless if no key) or falls back to the **official DeepSeek** provider — no uninstall needed. This is a real provider-switch UI, not a config file edit.
 - **Server-side connectivity probe**: `POST /api/tavily-probe` lets the card test a **stored** key (browsers cannot read stored secrets), using keyless mode when none is set.
+- **Status indicator**: a `GET /api/tavily-status` route reads the stored key and Tavily `GET /usage` (no search credits) and the card shows a live ✅/⚠️/❌ badge (normal / credits low / API error, or "no key"), refreshed by the host without re-entering the key.
 - **Full professional parameter set in the GUI**: API key, API Base URL, `maxResults`, `searchDepth` (basic/advanced/fast/ultra-fast), `topic`, `includeAnswer`, `includeRawContent`, `timeout`, `days`, `chunksPerSource`, `timeRange`, `startDate`/`endDate`, `includeImages`, `includeDomains`/`excludeDomains`, and `country` are editable from the card; advanced fields are tucked into a collapsed `<details>` block so ordinary users are not overwhelmed.
+- **Parameter presets**: one click stages a bundle of advanced values — **Deep research** (advanced depth, more results, raw content), **Quick summary** (basic depth, few results, detailed answer), **Live news** (news topic, day window) — then press Save; yaml-pinned fields are left alone.
 - **Configuration-first priority**: `cordis.patch.yml` > WebUI > code defaults. Any field explicitly set in the yaml is shown disabled on the card with a "covered by config file" badge, so a stale UI value can never shadow a developer's pinned config.
-- **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
+- **API connectivity test**: a lightweight `Test API connection` button checks the currently entered key/base URL directly from the browser and reports success or the API error, now **classified** (invalid key / insufficient credits / rate limited / service down / timeout / network) with a targeted explanation per case. Stored keys cannot be read back by the browser by design, so testing an already-configured key requires re-entering it once (it is not saved again).
 - **Usage & cost panel**: the card shows a live per-search credit/token estimate for the current settings, plus a `Check usage` button that reads Tavily `GET /usage` (remaining credits, search usage, plan) with the currently entered key. A host-side `usage()` method on the provider exposes the same data where the stored key is available.
 - **Page extraction**: a Tavily Extract-backed fetch provider (`tavily-extract`) reads a full page from a URL and returns it as clean text/html — select it once and URL retrieval is answered by Tavily.
-- **Rate-limit retry & cache**: extra attempts after a 429 response honor Tavily's `retry-after` with a bounded backoff, and an optional TTL cache serves identical searches to save credits.
+- **Rate-limit retry & cache**: extra attempts after a 429 response honor Tavily's `retry-after` with a bounded backoff, and an optional TTL cache serves identical searches to save credits — LRU-capped (default 200 entries) and, by default, skipped entirely for recency-sensitive searches (news/finance topics or any time window) so a "right now" question never gets a stale snapshot.
+- **Concise debug logging**: an opt-in `debug` switch logs one readable line per search/extract (query excerpt, depth, credits, cache state, duration, classified error) — never the API key or raw response bodies.
 - **Credential-first key handling**: per-search resolution order is literal `apiKey` → credentials service (`apiKeyEnv`) → `process.env[apiKeyEnv]`.
 
 ## Install
@@ -91,10 +94,12 @@ This plugin now **auto-selects Tavily** (`web.searchProvider: tavily`), so a fre
 Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)** card.
 
 - **Basic area (always visible)**:
+  - **Status indicator** — a live badge (✅ normal / ⚠️ credits low / ✗ API error / no key) checked by the host with the **stored** key (`GET /api/tavily-status`, which reads Tavily `GET /usage` and costs no search credits); the **Refresh** button forces a re-check (auto-checks are throttled to once a minute).
   - **Web search engine** — `Tavily` (default; keyless if no key) or `official DeepSeek`. This is the real provider switch; the plugin is already elected as the provider.
   - **API key** — paste your Tavily key. It is stored through the credentials service, never in a settings file.
   - **API Base URL** — leave blank for `https://api.tavily.com`, or set a proxy/endpoint base.
-  - **Test API connection** — verifies the key/base URL you just entered. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
+  - **Parameter preset** — apply **Deep research**, **Quick summary**, or **Live news** in one click: several advanced fields are staged at once (yaml-pinned fields are skipped); press **Save** to apply.
+  - **Test API connection** — verifies the key/base URL you just entered; failures are classified (invalid key / insufficient credits / rate limited / service down / timeout / network) with a targeted explanation. Testing consumes one Tavily search credit. If a key is already configured but you have not typed one, the card tells you to re-enter it once; the browser intentionally cannot read stored secrets back.
   - **Estimated cost** — a live line shows the estimated credits and rough token count for the current depth/result/chunk settings.
   - **Check usage** — reads Tavily `GET /usage` with the currently entered key and shows the remaining credits, search usage, and plan. Stored keys must be re-entered once, like the connectivity test.
 - **Advanced area (`🔧 Advanced Tavily request parameters`)**:
@@ -111,6 +116,9 @@ Open `设置 → 插件 → 网页搜索` and expand the **Web search (Tavily)**
   - **Country boost** — bias toward one country (general topic).
   - **Rate-limit retries** — extra attempts (0–5) after a 429; waits honor `retry-after` with a bounded backoff.
   - **Cache TTL (seconds)** — cache identical searches to save credits; 0 disables (0–3600).
+  - **Cache max entries** — LRU cap on cached searches (1–10000, default 200); the oldest entry evicts past it.
+  - **Skip cache for fresh queries** — when on (default), news/finance searches and searches with a time window bypass the cache entirely.
+  - **Debug logging** — one concise line per search/extract (query excerpt, credits, cache state, duration, errors); never the key or raw bodies.
   - **Request timeout (ms)** — default 30000.
   - **Recency window (days)** — optional recency filter for news/finance topics.
 
@@ -163,6 +171,9 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `days` | unset | recency window in days (news/finance topics) | ✓ |
 | `retryMaxAttempts` | `2` | extra attempts after a 429 (0–5) | ✓ |
 | `cacheTtlSeconds` | `0` | query-cache TTL in seconds (0 disables) | ✓ |
+| `cacheMaxEntries` | `200` | LRU cap on cached searches (1–10000) | ✓ |
+| `cacheBypassFresh` | `true` | skip the cache for news/finance or time-windowed searches | ✓ |
+| `debug` | `false` | concise per-search debug logging (never the key/raw bodies) | ✓ |
 | `startDate` | unset | include results after this `YYYY-MM-DD` | ✓ |
 | `endDate` | unset | include results before this `YYYY-MM-DD` | ✓ |
 | `includeImages` | `false` | collect query-related and per-source images | ✓ |
@@ -196,7 +207,7 @@ node scripts/patch-apiproxy.mjs            # patch every installed profile copy
 node scripts/patch-apiproxy.mjs --profile web   # patch one profile
 ```
 
-> **Server-side test of a stored key.** This plugin registers a host probe `POST /api/tavily-probe` that can test Tavily with a **stored** key server-side (keyless when none is set); `TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` are the programmatic host-side paths. The browser cannot read stored secrets back, so the card's `Test API connection` button still requires re-entering an already-configured key.
+> **Server-side test of a stored key.** This plugin registers a host probe `POST /api/tavily-probe` that can test Tavily with a **stored** key server-side (keyless when none is set); `TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` / `status()` are the programmatic host-side paths, and `GET /api/tavily-status` backs the card's status indicator. The browser cannot read stored secrets back, so the card's `Test API connection` button still requires re-entering an already-configured key.
 
 ## Mapping
 
@@ -210,6 +221,11 @@ High-confidence follow-ups identified in the product analysis:
 - ✅ **429 retry + short cache** — `retry-after`-aware backoff + optional TTL cache (implemented).
 - ✅ **Extract capability** — a Tavily Extract-backed `WebFetchProvider` registered on the existing fetch seam (implemented).
 - ✅ **apiproxy allowlist friction** — an idempotent `scripts/patch-apiproxy.mjs` (implemented).
+- ✅ **Status indicator** — `GET /api/tavily-status` (stored key, no credit cost) + card badge with refresh (implemented).
+- ✅ **Error taxonomy** — connectivity/usage failures classified as invalid key / insufficient credits / rate limited / service down / timeout / network with per-case UI copy (implemented).
+- ✅ **Cache hardening** — LRU cap (`cacheMaxEntries`) + fresh-query bypass (`cacheBypassFresh`) (implemented).
+- ✅ **Parameter presets** — deep research / quick summary / live news one-click staging in the card (implemented).
+- ✅ **Concise debug logging** — opt-in `debug` switch, one readable line per search/extract (implemented).
 
 ## Development
 

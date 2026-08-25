@@ -5,13 +5,14 @@
  * yaml composition layer are rendered disabled with a dedicated badge.
  */
 
+import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // The keyed-slot contract for 'settings.plugin.item' is pinned in
 // ./slot-contract.ts — the card registers into a slot the shell declares.
 import './slot-contract.ts'
 import { CheckField, SecretField, SelectField, ValueField } from './fields.tsx'
 import { PluginCard } from './PluginCard.tsx'
-import type { TavilyCardFace } from './tavily-card-controller.ts'
+import { TAVILY_PRESETS, type TavilyCardFace, type TavilyErrorCode } from './tavily-card-controller.ts'
 import type {} from './locales.ts'
 
 /** Props the renderer binds for the Tavily card. */
@@ -44,6 +45,57 @@ function formatTokenHint(tokens: number): string {
   return String(tokens)
 }
 
+/** The `t` reader type used by the card's helper mappers. */
+type LocaleReader = (key: Parameters<TavilyCardProps['t']>[0]) => string
+
+/** Localized explanation for one classified error code. */
+const ERROR_CODE_KEYS: Record<TavilyErrorCode, Parameters<TavilyCardProps['t']>[0]> = {
+  invalid_key: 'errorInvalidKey',
+  insufficient_credits: 'errorInsufficientCredits',
+  rate_limited: 'errorRateLimited',
+  server_down: 'errorServerDown',
+  timeout: 'errorTimeout',
+  network: 'errorNetwork',
+  http: 'errorHttp',
+  other: 'errorOther',
+}
+
+/**
+ * Human-readable copy for a classified failure, falling back to the raw detail
+ * when the code is unknown (a newer Host may report one this card has no copy for).
+ * @param t - the locale reader.
+ * @param code - the classified error code (optional).
+ * @returns localized guidance for the failure class.
+ */
+function errorLabel(t: LocaleReader, code?: TavilyErrorCode): string {
+  if (code === undefined) return ''
+  const key = ERROR_CODE_KEYS[code]
+  return key === undefined ? '' : t(key)
+}
+
+/** What the status indicator badge reads for each status. */
+const STATUS_KEYS: Record<string, Parameters<TavilyCardProps['t']>[0]> = {
+  idle: 'statusIdle',
+  checking: 'statusChecking',
+  ok: 'statusOk',
+  low: 'statusLow',
+  error: 'statusError',
+  'no-key': 'statusNoKey',
+}
+
+/** The status indicator's badge enum for styling. */
+type StatusKind = 'idle' | 'checking' | 'ok' | 'low' | 'error' | 'no-key'
+
+/** Locale key of a preset's display name. */
+function presetKeyOf(id: string): Parameters<TavilyCardProps['t']>[0] {
+  switch (id) {
+    case 'deep-research': return 'presetDeepResearch'
+    case 'quick-summary': return 'presetQuickSummary'
+    case 'news-live': return 'presetNewsLive'
+    default: return 'presetPlaceholder'
+  }
+}
+
 /**
  * Render the Tavily card.
  * @param props - locale copy, the card snapshot, and its form actions.
@@ -54,6 +106,10 @@ export function TavilyCard(props: TavilyCardProps) {
   const state = props.useTavilyCard(snapshot => snapshot)
   const disabled = !state.writable
   const testing = state.apiTest.status === 'testing'
+  const [preset, setPreset] = useState('')
+  const statusKind = STATUS_KEYS[state.status.status] !== undefined
+    ? state.status.status as StatusKind
+    : 'idle'
   return (
     <PluginCard
       t={t}
@@ -63,6 +119,36 @@ export function TavilyCard(props: TavilyCardProps) {
       onSave={props.save}
       onDiscard={props.discard}
     >
+      {/* ⓪ Status indicator (stored-key, host-checked; no credit cost). */}
+      <div className="dsh-tavily-status-area">
+        <span className={`dsh-tavily-status dsh-tavily-status-${statusKind}`} role="status">
+          {t(STATUS_KEYS[state.status.status] ?? 'statusIdle')}
+        </span>
+        <button
+          type="button"
+          className="dsh-tavily-test"
+          disabled={state.status.status === 'checking'}
+          onClick={() => { props.refreshStatus(true) }}
+        >
+          {state.status.status === 'checking' ? t('statusCheckingShort') : t('statusRefresh')}
+        </button>
+        {state.status.status === 'ok' || state.status.status === 'low'
+          ? (
+            <p className="dsh-tavily-status-detail" role="status">
+              {t('statusRemaining')}{state.status.remaining ?? 0}{t('statusOf')}
+              {state.status.limit != null ? String(state.status.limit) : t('usageUnlimited')}
+              {state.status.plan != null && state.status.plan !== '' ? ` (${state.status.plan})` : ''}
+            </p>
+          )
+          : state.status.status === 'error' && state.status.detail !== ''
+            ? (
+              <p className="dsh-tavily-status-error" role="alert">
+                {t('statusFailed')} {state.status.detail}
+              </p>
+            )
+            : <p className="dsh-tavily-status-hint">{t('statusHint')}</p>}
+      </div>
+
       {/* ① Basic settings (always visible). */}
       <div className="dsh-tavily-wiring">
         <p className="dsh-tavily-wiring-title" role="note">{t('wiringTitle')}</p>
@@ -136,7 +222,7 @@ export function TavilyCard(props: TavilyCardProps) {
                 ? t('testApiNeedKey')
                 : state.apiTest.detail === 'need-key-configured'
                   ? t('testApiKeyConfiguredNeedReentry')
-                  : `${t('testApiFailed')} ${state.apiTest.detail}`}
+                  : `${t('testApiFailed')} ${errorLabel(t, state.apiTest.code)}${state.apiTest.detail !== '' ? ` (${state.apiTest.detail})` : ''}`}
             </p>
           )
           : null}
@@ -176,10 +262,32 @@ export function TavilyCard(props: TavilyCardProps) {
                 ? t('testApiNeedKey')
                 : state.usage.detail === 'need-key-configured'
                   ? t('testApiKeyConfiguredNeedReentry')
-                  : `${t('usageFailed')} ${state.usage.detail}`}
+                  : `${t('usageFailed')} ${errorLabel(t, state.usage.code)}${state.usage.detail !== '' ? ` (${state.usage.detail})` : ''}`}
             </p>
           )
           : null}
+      </div>
+
+      {/* ⓵ Parameter presets: one click stages a bundle of advanced fields. */}
+      <div className="dsh-tavily-preset-area">
+        <label className="dsh-tavily-label" htmlFor="plugin-config-tavily-preset">{t('presetLabel')}</label>
+        <select
+          id="plugin-config-tavily-preset"
+          className="dsh-tavily-input dsh-tavily-select"
+          value={preset}
+          disabled={disabled}
+          onChange={(event) => {
+            const id = event.target.value
+            setPreset('')
+            if (id !== '') props.applyPreset(id)
+          }}
+        >
+          <option value="">{t('presetPlaceholder')}</option>
+          {Object.values(TAVILY_PRESETS).map(entry => (
+            <option key={entry.id} value={entry.id}>{t(presetKeyOf(entry.id))}</option>
+          ))}
+        </select>
+        <p className="dsh-tavily-hint">{t('presetHint')}</p>
       </div>
 
       {/* ② Advanced request parameters (collapsed by default). */}
@@ -452,6 +560,45 @@ export function TavilyCard(props: TavilyCardProps) {
           {...state.cacheTtlSeconds}
           onEdit={(text) => { props.edit('cacheTtlSeconds', text) }}
           onReset={() => { props.resetField('cacheTtlSeconds') }}
+        />
+        <ValueField
+          id="plugin-config-tavily-cache-max-entries"
+          label={t('tavilyCacheMaxEntries')}
+          hint={t('tavilyCacheMaxEntriesHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          invalidLabel={t('invalidNumber')}
+          numeric
+          placeholder="200"
+          disabled={disabled}
+          {...state.cacheMaxEntries}
+          onEdit={(text) => { props.edit('cacheMaxEntries', text) }}
+          onReset={() => { props.resetField('cacheMaxEntries') }}
+        />
+        <CheckField
+          id="plugin-config-tavily-cache-bypass-fresh"
+          label={t('tavilyCacheBypassFresh')}
+          hint={t('tavilyCacheBypassFreshHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          disabled={disabled}
+          {...state.cacheBypassFresh}
+          onEdit={(text) => { props.edit('cacheBypassFresh', text) }}
+          onReset={() => { props.resetField('cacheBypassFresh') }}
+        />
+        <CheckField
+          id="plugin-config-tavily-debug"
+          label={t('tavilyDebug')}
+          hint={t('tavilyDebugHint')}
+          overriddenLabel={t('overridden')}
+          configCoveredLabel={t('configCovered')}
+          resetLabel={t('reset')}
+          disabled={disabled}
+          {...state.debug}
+          onEdit={(text) => { props.edit('debug', text) }}
+          onReset={() => { props.resetField('debug') }}
         />
         <ValueField
           id="plugin-config-tavily-timeout"

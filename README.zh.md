@@ -11,12 +11,15 @@
 - **即装即用（无需手动配提供方）**：安装本插件即通过其 `cordis.patch.yml` **自动把 `web_search` 提供方选为 Tavily**。卡片里粘一个 Key 就能搜，无需改 yaml 或设 `DSH_WEB_SEARCH_PROVIDER`。
 - **Tavily/DeepSeek 引擎开关**：GUI 开关让 `web_search` 由 Tavily（默认；无 Key 走 keyless）应答，或回退到**官方 DeepSeek**——无需卸载。这是真正切换提供方的开关，不是改配置。
 - **服务端连通探针**：`POST /api/tavily-probe` 让卡片能测试**已保存的 Key**（浏览器读不回已存密钥），无 Key 时走 keyless。
+- **状态指示器**：`GET /api/tavily-status` 用**已保存的 Key** 读取 Tavily `GET /usage`（不消耗搜索额度），卡片常驻显示 ✅ 正常 / ⚠️ 额度不足 / ✗ API 错误（或「未配置 Key」）徽标，由宿主机刷新、无需重新输入密钥。
 - **GUI 完整专业参数**：API Key、API Base URL、`maxResults`、`searchDepth`（basic/advanced/fast/ultra-fast）、`topic`、`includeAnswer`、`includeRawContent`、`timeout`、`days`、`chunksPerSource`、`timeRange`、`startDate`/`endDate`、`includeImages`、`includeDomains`/`excludeDomains`、`country` 全部可在卡片编辑；高级参数收进默认折叠的 `<details>` 面板，普通用户不会被大量选项吓到。
+- **参数预设模板**：一键暂存一组高级参数——**深度研究**（advanced 深度、更多结果、返回原始内容）、**快速摘要**（basic 深度、少量结果、详细摘要）、**新闻实时**（news 主题、day 时间窗），点「保存」生效；被配置文件覆盖的字段自动跳过。
 - **配置文件优先**：`cordis.patch.yml` > WebUI > 代码默认值。yaml 显式设置的字段在卡片上置灰并显示「该参数已被配置文件覆盖」，WebUI 无法覆盖。
-- **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
+- **API 连通测试**：基础设置区提供独立「测试API连接」按钮，直接用当前填写的 key/baseUrl 发起轻量搜索并展示成功/报错信息，报错已**分类**（Key 无效 / 余额不足 / 限流 / 服务宕机 / 超时 / 网络）并给出对应解决文案。已保存的密钥因安全设计无法被浏览器读回，测试已配置密钥时需要重新输入一次（不会重复保存）。
 - **用量与成本面板**：卡片实时显示当前设置的每次搜索积分/token 预估，并提供「检查用量」按钮读取 Tavily `GET /usage`（剩余额度、搜索用量、套餐）。提供方另有宿主侧 `usage()` 方法可在已存密钥可用时读取同一数据。
 - **页面抓取**：基于 Tavily Extract 的 fetch 提供方（`tavily-extract`）从 URL 读取整页内容并返回干净的 text/html —— 选择一次后，URL 检索即由 Tavily 应答。
-- **限流重试与缓存**：收到 429 后按 `retry-after` 做有界退避重试；可选 TTL 缓存让相同查询直接命中以节省额度。
+- **限流重试与缓存**：收到 429 后按 `retry-after` 做有界退避重试；可选 TTL 缓存让相同查询直接命中以节省额度——缓存带 **LRU 上限**（默认 200 条），且默认对**时效敏感查询**（news/finance 主题或任意时间窗口）完全跳过，「现在」类问题绝不命中陈旧快照。
+- **精简调试日志**：可选 `debug` 开关，每次搜索/抓取输出一行可读日志（查询节选、深度、积分、缓存状态、耗时、分类错误）——绝不记录密钥或原始响应体。
 - **凭据优先的密钥解析**：每次搜索按 字面量 `apiKey` → 凭据服务（`apiKeyEnv`）→ `process.env[apiKeyEnv]` 的顺序解析。
 
 ## 安装
@@ -91,10 +94,12 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
 打开 `设置 → 插件 → 网页搜索`，展开 **网页搜索（Tavily）** 卡片。
 
 - **基础设置（默认展开）**：
+  - **状态指示器** —— 常驻徽标（✅ 正常 / ⚠️ 额度不足 / ✗ API 错误 / 未配置 Key），由宿主机用**已保存的 Key** 检查（`GET /api/tavily-status` 读取 `GET /usage`，不消耗搜索额度）；「刷新」按钮强制重查（自动检查限每分钟一次）。
   - **网页搜索引擎** —— `Tavily`（默认；无 Key 走 keyless）或 `官方 DeepSeek`。这是真正的提供方开关；插件已被自动选为提供方。
   - **API Key** —— 粘贴你的 Tavily 密钥。密钥经凭据服务写入，绝不进入设置文件。
   - **API Base URL** —— 留空使用 `https://api.tavily.com`；可填代理/自定义接口地址。
-  - **测试API连接** —— 验证当前输入的 key/baseUrl；测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
+  - **参数预设** —— 一键应用「深度研究 / 快速摘要 / 新闻实时」：多个高级字段被同时暂存（被配置文件覆盖的字段跳过），点「保存」生效。
+  - **测试API连接** —— 验证当前输入的 key/baseUrl；失败会分类提示（Key 无效 / 余额不足 / 限流 / 服务宕机 / 超时 / 网络）并附解决建议。测试会消耗一次 Tavily 搜索额度。如果已配置密钥但输入框为空，会提示重新输入一次（浏览器无法读取已保存的密钥）。
   - **预估成本** —— 实时显示当前深度/结果数/片段数对应的预估积分与大致 token 量。
   - **检查用量** —— 用当前输入的 key 读取 Tavily `GET /usage`，展示剩余额度、搜索用量与套餐；已保存的密钥与测试一样需重新输入一次。
 - **高级搜索参数（`🔧 高级 Tavily 请求参数`，默认收起）**：
@@ -111,6 +116,9 @@ export DSH_WEB_FETCH_PROVIDER=tavily-extract
   - **国家加权** —— 偏向某一国家（general 主题）。
   - **限流重试次数** —— 收到 429 后的额外重试次数（0–5）；等待遵循 `retry-after` 并做有界退避。
   - **缓存时长（秒）** —— 缓存相同查询以节省额度；0 表示关闭（0–3600）。
+  - **缓存条目上限** —— 缓存条目的 LRU 上限（1–10000，默认 200）；超出后淘汰最旧条目。
+  - **时效性查询跳过缓存** —— 开启（默认）时，news/finance 主题或带时间窗口的搜索完全绕过缓存。
+  - **调试日志** —— 每次搜索/抓取输出一行精简日志（查询节选、积分、缓存状态、耗时、错误）；绝不记录密钥或原始响应。
   - **请求超时（毫秒）** —— 默认 30000。
   - **时间窗口（天）** —— 可选，用于 news/finance 的时效过滤。
 
@@ -163,6 +171,9 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `days` | （未设） | 时效窗口（天），用于 news/finance | ✓ |
 | `retryMaxAttempts` | `2` | 收到 429 后的额外重试（0–5） | ✓ |
 | `cacheTtlSeconds` | `0` | 查询缓存时长（秒），0 关闭 | ✓ |
+| `cacheMaxEntries` | `200` | 缓存条目的 LRU 上限（1–10000） | ✓ |
+| `cacheBypassFresh` | `true` | 时效敏感查询（news/finance 或带时间窗口）跳过缓存 | ✓ |
+| `debug` | `false` | 精简的每次搜索调试日志（绝不记录密钥/原始响应） | ✓ |
 | `startDate` | （未设） | 只返回该 `YYYY-MM-DD` 之后的结果 | ✓ |
 | `endDate` | （未设） | 只返回该 `YYYY-MM-DD` 之前的结果 | ✓ |
 | `includeImages` | `false` | 收集查询相关及来源图片 | ✓ |
@@ -196,7 +207,7 @@ node scripts/patch-apiproxy.mjs                    # 修补所有已安装 profi
 node scripts/patch-apiproxy.mjs --profile web      # 只修补指定 profile
 ```
 
-> **已保存密钥的服务端测试**：本插件注册了宿主侧探针 `POST /api/tavily-probe`，可在服务端用已存 Key 测试 Tavily 连通性（无 Key 走 keyless）；`TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` 也提供了编程用的服务端路径。浏览器侧因安全设计读不回已存密钥，故「测试API连接」按钮仍要求已配置密钥时重输一次。
+> **已保存密钥的服务端测试**：本插件注册了宿主侧探针 `POST /api/tavily-probe`，可在服务端用已存 Key 测试 Tavily 连通性（无 Key 走 keyless）；`TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` / `status()` 也提供了编程用的服务端路径，`GET /api/tavily-status` 为卡片状态指示器供数。浏览器侧因安全设计读不回已存密钥，故「测试API连接」按钮仍要求已配置密钥时重输一次。
 
 ## 映射
 
@@ -210,6 +221,11 @@ Tavily 的扁平 `results[]` 映射为规范化的 `WebSearchSource`：`url` ←
 - ✅ **429 重试 + 短时缓存** —— `retry-after` 感知退避 + 可选 TTL 缓存（已实现）。
 - ✅ **Extract 提取能力** —— 已在现有 fetch seam 上注册基于 Tavily Extract 的 `WebFetchProvider`（已实现）。
 - ✅ **apiproxy 白名单摩擦** —— 提供幂等的 `scripts/patch-apiproxy.mjs`（已实现）。
+- ✅ **状态指示器** —— `GET /api/tavily-status`（已存密钥，不消耗搜索额度）+ 卡片徽标与刷新（已实现）。
+- ✅ **错误分类** —— 连通/用量失败分类为 Key 无效 / 余额不足 / 限流 / 服务宕机 / 超时 / 网络，并附分场景 UI 文案（已实现）。
+- ✅ **缓存加固** —— LRU 上限（`cacheMaxEntries`）+ 时效性查询绕行（`cacheBypassFresh`）（已实现）。
+- ✅ **参数预设** —— 卡片一键暂存「深度研究 / 快速摘要 / 新闻实时」（已实现）。
+- ✅ **精简调试日志** —— 可选 `debug` 开关，每次搜索/抓取输出一行可读日志（已实现）。
 
 ## 开发
 

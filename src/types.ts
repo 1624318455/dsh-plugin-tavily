@@ -116,6 +116,32 @@ export interface TavilyUsage {
   account?: TavilyUsageAccount
 }
 
+/** Status codes the provider's status/probe differentiation reports. */
+export type TavilyStatusCodes =
+  | 'ok' | 'low'
+  | 'no-key' | 'invalid_key' | 'insufficient_credits' | 'rate_limited'
+  | 'server_down' | 'timeout' | 'network' | 'http' | 'other'
+
+/** Structured result of one credit/connectivity status check. */
+export interface TavilyStatus {
+  /** `true` when the check itself succeeded (codes `ok`/`low`). */
+  ok: boolean
+  /** Machine-routable differentiation; see {@link TavilyStatusCodes}. */
+  code: TavilyStatusCodes
+  /** Human-readable failure detail when `ok` is false. */
+  error?: string
+  /** Remaining credits (key-scoped usage) when the check succeeded. */
+  remaining?: number
+  /** Credit limit; `null`/absent means the plan does not cap key usage. */
+  limit?: number | null
+  /** Search credits consumed in the current cycle. */
+  searchUsed?: number
+  /** Account plan name when the check succeeded. */
+  plan?: string
+  /** Wall-clock stamp of the check. */
+  checkedAt: number
+}
+
 /** One extracted page from `POST /extract`. */
 export interface TavilyExtractEntry {
   url: string

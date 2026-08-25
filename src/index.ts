@@ -28,6 +28,8 @@ import {
   TavilyExtractProvider,
   TAVILY_DEFAULT_API_KEY_ENV,
   TAVILY_DEFAULT_BASE_URL,
+  TAVILY_DEFAULT_CACHE_BYPASS_FRESH,
+  TAVILY_DEFAULT_CACHE_MAX_ENTRIES,
   TAVILY_DEFAULT_INCLUDE_ANSWER,
   TAVILY_DEFAULT_INCLUDE_RAW_CONTENT,
   TAVILY_DEFAULT_MAX_RESULTS,
@@ -42,6 +44,8 @@ import type { DelegateSearch, TavilySearchProviderOptions } from './provider'
 export {
   TAVILY_DEFAULT_API_KEY_ENV,
   TAVILY_DEFAULT_BASE_URL,
+  TAVILY_DEFAULT_CACHE_BYPASS_FRESH,
+  TAVILY_DEFAULT_CACHE_MAX_ENTRIES,
   TAVILY_DEFAULT_INCLUDE_ANSWER,
   TAVILY_DEFAULT_INCLUDE_RAW_CONTENT,
   TAVILY_DEFAULT_MAX_RESULTS,
@@ -57,6 +61,7 @@ export {
   estimateSearchCredits,
 } from './provider'
 export type { TavilySearchProviderOptions } from './provider'
+export type { TavilyStatus, TavilyStatusCodes } from './types'
 export type { TavilyUsage } from './types'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -120,6 +125,12 @@ export interface Config {
   retryMaxAttempts?: number
   /** Query-cache TTL in seconds; `0` disables the in-memory result cache. Defaults to 0. */
   cacheTtlSeconds?: number
+  /** Maximum cached search entries (LRU cap); the oldest entry is evicted past it. Defaults to 200. */
+  cacheMaxEntries?: number
+  /** Skip the result cache for recency-sensitive searches (news/finance topic or a time window). Defaults to true. */
+  cacheBypassFresh?: boolean
+  /** Concise per-search debug logging (never the key or raw response bodies). Defaults to false. */
+  debug?: boolean
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
@@ -155,6 +166,9 @@ export const Config: z<Config> = z.object({
   maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.'),
   retryMaxAttempts: z.number().step(1).min(0).max(5).description('Extra attempts after a rate-limited (429) response.'),
   cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
+  cacheMaxEntries: z.number().step(1).min(1).max(10000).description('Maximum cached search entries (LRU cap; the oldest entry is evicted past it).'),
+  cacheBypassFresh: z.boolean().description('Skip the result cache for recency-sensitive searches (news/finance topic or a time window).'),
+  debug: z.boolean().description('Concise per-search debug logging (never the key or raw response bodies).'),
   numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
   engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
 })
@@ -217,6 +231,10 @@ function resolveOptions(ctx: Context, config: Config, entry: Config): TavilySear
     ...effective.country !== undefined ? { country: effective.country } : {},
     ...effective.retryMaxAttempts !== undefined ? { retryMaxAttempts: effective.retryMaxAttempts } : {},
     ...effective.cacheTtlSeconds !== undefined ? { cacheTtlMs: effective.cacheTtlSeconds * 1000 } : {},
+    ...effective.cacheMaxEntries !== undefined ? { cacheMaxEntries: effective.cacheMaxEntries } : {},
+    ...effective.cacheBypassFresh !== undefined ? { cacheBypassFresh: effective.cacheBypassFresh } : {},
+    ...effective.debug !== undefined ? { debug: effective.debug } : {},
+    log: (message: string) => { ctx.logger('dsh-plugin-tavily').info(message) },
   }
 }
 
@@ -302,6 +320,26 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         sendJson(res, 200, { ok: false, code: 'other', error: detail })
+      }
+    },
+  })
+  // Server-side status for the card's indicator: GET /api/tavily-status reads
+  // the stored key (browsers cannot read it) and Tavily GET /usage — which
+  // costs no search credits — then reports ok/low/error in a structured payload.
+  ctx.webServer.register({
+    kind: 'exact',
+    path: '/api/tavily-status',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { ok: false, code: 'other', error: 'method not allowed' })
+        return
+      }
+      try {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(await provider.status()))
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        sendJson(res, 200, { ok: false, code: 'other', error: detail, checkedAt: Date.now() })
       }
     },
   })

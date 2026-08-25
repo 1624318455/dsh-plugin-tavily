@@ -26,6 +26,8 @@ import type {
   TavilyResult,
   TavilySearchDepth,
   TavilySearchResponse,
+  TavilyStatus,
+  TavilyStatusCodes,
   TavilyTimeRange,
   TavilyUsage,
 } from './types'
@@ -72,6 +74,16 @@ export const TAVILY_DEFAULT_RETRY_MAX_ATTEMPTS = 2
 /** Default query cache TTL in ms; `0` disables the result cache. */
 export const TAVILY_DEFAULT_CACHE_TTL_MS = 0
 
+/** Default maximum cached search entries; the oldest entry is evicted past this cap. */
+export const TAVILY_DEFAULT_CACHE_MAX_ENTRIES = 200
+
+/**
+ * Default: skip the result cache for recency-sensitive searches (news/finance
+ * topics or any explicit time window), so a cached snapshot never answers a
+ * question the user framed as "right now".
+ */
+export const TAVILY_DEFAULT_CACHE_BYPASS_FRESH = true
+
 /** Base delay (ms) for the exponential rate-limit backoff before retrying. */
 const RETRY_BASE_DELAY_MS = 250
 
@@ -82,7 +94,7 @@ const RETRY_MAX_DELAY_MS = 4_000
 export const TAVILY_DEFAULT_API_KEY_ENV = 'TAVILY_API_KEY'
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'dsh-plugin-tavily/0.3.1'
+const USER_AGENT = 'dsh-plugin-tavily/0.4.0'
 
 /**
  * Resolved provider options. `apply` supplies env-var and constant defaults; the
@@ -142,6 +154,24 @@ export interface TavilySearchProviderOptions {
   retryMaxAttempts?: number
   /** Query-cache TTL in ms; `0` disables the (in-memory) result cache. */
   cacheTtlMs?: number
+  /**
+   * Maximum cached search entries; the oldest entry is evicted past this cap.
+   * Defaults to {@link TAVILY_DEFAULT_CACHE_MAX_ENTRIES}.
+   */
+  cacheMaxEntries?: number
+  /**
+   * Skip the result cache for recency-sensitive searches (news/finance topics
+   * or any explicit time window). Defaults to {@link TAVILY_DEFAULT_CACHE_BYPASS_FRESH}.
+   */
+  cacheBypassFresh?: boolean
+  /**
+   * Concise per-operation debug logging (query excerpt, credits, cache state,
+   * duration, error code+message) through {@link log}. Never logs the key or
+   * raw response bodies. Defaults to `false`.
+   */
+  debug?: boolean
+  /** Sink for one concise debug line; only called while `debug` is on. */
+  log?: (message: string) => void
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
 }
@@ -212,6 +242,12 @@ interface CacheEntry {
   result: WebSearchResult
 }
 
+/** Cache outcome of one search, reported into the debug log line. */
+interface SearchStats {
+  /** `hit`: served from cache; `miss`: fetched and cached; `bypassed`: fresh-sensitive (not cached); `disabled`: TTL 0. */
+  cache: 'hit' | 'miss' | 'bypassed' | 'disabled'
+}
+
 /** The Tavily-backed search provider; HTTP redirects fail as `WEB_PROVIDER_ERROR`. */
 export class TavilySearchProvider implements WebSearchProvider {
   readonly id = TAVILY_PROVIDER_ID
@@ -248,6 +284,7 @@ export class TavilySearchProvider implements WebSearchProvider {
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
     const options = this.resolveOptions()
+    const started = Date.now()
     // The card's engine switch: `tavily` (default) answers through Tavily
     // (keyless if no key); `deepseek` answers through the official DeepSeek
     // provider. One switch, no overlapping modes.
@@ -265,10 +302,24 @@ export class TavilySearchProvider implements WebSearchProvider {
       if (delegated === undefined) {
         throw new WebError('official DeepSeek search returned no result', 'WEB_PROVIDER_ERROR')
       }
+      debugLog(options, `search "${truncateQuery(request.query)}" -> deepseek engine, ${Date.now() - started}ms, ${delegated.sources.length} sources`)
       return delegated
     }
     const apiKey = await resolveRequestApiKey(options, signal)
-    return this.tavilySearch(request, signal, options, apiKey)
+    const stats: SearchStats = { cache: 'disabled' }
+    try {
+      const result = await this.tavilySearch(request, signal, options, apiKey, stats)
+      debugLog(
+        options,
+        `search "${truncateQuery(request.query)}" depth=${options.searchDepth} `
+        + `results=${result.sources.length} credits=${estimateSearchCredits(options.searchDepth)} `
+        + `cache=${stats.cache} ${Date.now() - started}ms`,
+      )
+      return result
+    } catch (error: unknown) {
+      debugLog(options, `search "${truncateQuery(request.query)}" failed: ${describeSearchError(error)}`)
+      throw error
+    }
   }
 
   /**
@@ -319,6 +370,83 @@ export class TavilySearchProvider implements WebSearchProvider {
       return await response.json() as TavilyUsage
     } catch (error: unknown) {
       throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
+    }
+  }
+
+  /**
+   * Read the current key/account credit usage for the card's status indicator.
+   *
+   * Unlike {@link usage} this never throws for a missing/stored-only credential:
+   * it resolves the stored key server-side (the card cannot read it), reports
+   * `no-key` when none is configured, and always returns a structured outcome
+   * the route can serialize directly. Reading `/usage` consumes no search
+   * credits.
+   * @param signal - optional cancellation signal.
+   * @returns a structured status outcome.
+   */
+  async status(signal?: AbortSignal): Promise<TavilyStatus> {
+    const options = this.resolveOptions()
+    const checkedAt = Date.now()
+    let apiKey: string
+    try {
+      apiKey = await resolveRequestApiKey(options, signal)
+    } catch (error: unknown) {
+      if (error instanceof WebError && error.code === 'WEB_PROVIDER_CREDENTIAL_MISSING') {
+        return { ok: false, code: 'no-key', checkedAt }
+      }
+      return { ok: false, code: 'other', error: String(error), checkedAt }
+    }
+    const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
+    let response: Response
+    try {
+      response = await fetch(`${options.baseURL}${TAVILY_DEFAULT_USAGE_PATH}`, {
+        method: 'GET',
+        redirect: 'error',
+        headers: {
+          'authorization': `Bearer ${apiKey}`,
+          'accept': 'application/json',
+          'user-agent': USER_AGENT,
+        },
+        ...requestSignal !== undefined ? { signal: requestSignal } : {},
+      })
+    } catch (error: unknown) {
+      if (timeoutSignal?.aborted === true) {
+        return { ok: false, code: 'timeout', error: `timed out after ${options.timeout}ms`, checkedAt }
+      }
+      debugLog(options, `status failed: network ${String(error)}`)
+      return { ok: false, code: 'network', error: String(error), checkedAt }
+    }
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      try {
+        const parsed = await response.json() as TavilyError
+        message = parsed.detail?.error ?? parsed.error ?? parsed.message ?? message
+      } catch (_errorBodyReadFailure) {
+        // Keep the status message.
+      }
+      const code = classifyTavilyHttpStatus(response.status, message)
+      debugLog(options, `status failed: ${code} ${message}`)
+      return { ok: false, code, error: message, checkedAt }
+    }
+    try {
+      const usage = await response.json() as TavilyUsage
+      const remaining = usage.key?.usage
+      const limit = usage.key?.limit ?? null
+      const low = remaining !== undefined && limit !== null && typeof limit === 'number'
+        && remaining <= Math.max(1, limit * 0.2)
+      debugLog(options, `status ok: remaining=${remaining ?? '?'} limit=${limit ?? 'unlimited'} plan=${usage.account?.current_plan ?? '?'}`)
+      return {
+        ok: true,
+        code: low ? 'low' : 'ok',
+        remaining,
+        limit,
+        searchUsed: usage.key?.search_usage,
+        plan: usage.account?.current_plan,
+        checkedAt,
+      }
+    } catch (error: unknown) {
+      debugLog(options, `status failed: parse ${String(error)}`)
+      return { ok: false, code: 'other', error: String(error), checkedAt }
     }
   }
 
@@ -437,7 +565,7 @@ export class TavilySearchProvider implements WebSearchProvider {
         } catch (_bodyFailure) {
           // keep status message
         }
-        const code = response.status === 401 || response.status === 403 ? 'invalid_key' : 'http'
+        const code = classifyTavilyHttpStatus(response.status, message)
         return { ok: false, mode, code, error: message }
       }
       return { ok: true, mode }
@@ -486,16 +614,28 @@ export class TavilySearchProvider implements WebSearchProvider {
     signal: AbortSignal | undefined,
     options: TavilySearchProviderOptions,
     apiKey: string,
+    stats: SearchStats,
   ): Promise<WebSearchResult> {
     // A per-request bound wins over the configured default; either may be absent.
     const maxResults = request.maxResults ?? options.maxResults ?? options.numResults
     const cacheTtl = options.cacheTtlMs ?? TAVILY_DEFAULT_CACHE_TTL_MS
-    const cacheKey = cacheTtl > 0
+    // Recency-sensitive searches never touch the cache: a snapshot from
+    // seconds ago would betray a "right now" question.
+    const freshSensitive = options.cacheBypassFresh !== false && isFreshSensitive(options)
+    const cacheEnabled = cacheTtl > 0 && !freshSensitive
+    stats.cache = freshSensitive ? 'bypassed' : 'disabled'
+    const cacheKey = cacheEnabled
       ? this.cacheFingerprint(request, options, maxResults, apiKey)
       : undefined
     if (cacheKey !== undefined) {
       const hit = this.cache.get(cacheKey)
-      if (hit !== undefined && hit.expires > Date.now()) return hit.result
+      if (hit !== undefined && hit.expires > Date.now()) {
+        // Move-to-front so the LRU eviction below drops the truly oldest entry.
+        this.cache.delete(cacheKey)
+        this.cache.set(cacheKey, hit)
+        stats.cache = 'hit'
+        return hit.result
+      }
     }
 
     const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
@@ -553,19 +693,34 @@ export class TavilySearchProvider implements WebSearchProvider {
           // malformed/non-JSON error body (normal for gateway 5xx/429s) can only
           // cost a richer provider message, never the real error.
         }
-        throw new WebError(message, 'WEB_PROVIDER_ERROR')
+        // A finer code travels in the message so the card/host can tell "invalid
+        // key" from "insufficient credits" and "rate limit" from "service down".
+        const code = classifyTavilyHttpStatus(status, message)
+        throw new WebError(`Tavily API error (${code}): ${message}`, 'WEB_PROVIDER_ERROR')
       }
 
       try {
         const payload = await response.json() as TavilySearchResponse
         const result = mapTavilyResponse(payload)
-        if (cacheKey !== undefined) {
+        if (cacheEnabled && cacheKey !== undefined) {
           this.cache.set(cacheKey, { expires: Date.now() + cacheTtl, result })
+          this.evictCacheTo(options)
+          stats.cache = 'miss'
         }
         return result
       } catch (error: unknown) {
         throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
       }
+    }
+  }
+
+  /** Evict the oldest cached entries until the cache sits at or under its cap. */
+  private evictCacheTo(options: TavilySearchProviderOptions): void {
+    const max = Math.max(1, options.cacheMaxEntries ?? TAVILY_DEFAULT_CACHE_MAX_ENTRIES)
+    while (this.cache.size > max) {
+      const oldest = this.cache.keys().next().value
+      if (oldest === undefined) break
+      this.cache.delete(oldest)
     }
   }
 }
@@ -595,6 +750,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
 
   async fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult> {
     const options = this.resolveOptions()
+    const started = Date.now()
     const apiKey = await resolveRequestApiKey(options, signal)
     const { signal: requestSignal, timeoutSignal } = makeRequestSignal(signal, options.timeout)
 
@@ -613,6 +769,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
         ...requestSignal !== undefined ? { signal: requestSignal } : {},
       })
     } catch (error: unknown) {
+      debugLog(options, `extract ${request.url} failed: ${describeSearchError(error)}`)
       throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
     }
 
@@ -628,6 +785,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
         }
         if (signal?.aborted === true || isAbortError(error)) throw searchAborted(signal, error)
       }
+      debugLog(options, `extract ${request.url} failed: ${message}`)
       throw new WebError(message, 'WEB_PROVIDER_ERROR')
     }
 
@@ -638,6 +796,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
       const entry = (payload.results ?? []).find(item => item.url === request.url)
         ?? (payload.results ?? [])[0]
       const content = entry?.raw_content ?? ''
+      debugLog(options, `extract ${request.url} ${content.length}b ${Date.now() - started}ms`)
       return {
         url: response.url === '' ? request.url : response.url,
         statusCode: response.status,
@@ -645,6 +804,7 @@ export class TavilyExtractProvider implements WebFetchProvider {
         truncated: false,
       }
     } catch (error: unknown) {
+      debugLog(options, `extract ${request.url} failed: ${describeSearchError(error)}`)
       throw classifiedSearchError(error, signal, timeoutSignal, options.timeout)
     }
   }
@@ -698,6 +858,57 @@ function isValidBaseUrl(baseURL: string): boolean {
 /** True for a request limit that can be sent to Tavily (a positive whole number). */
 function isPositiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0
+}
+
+/**
+ * Classify an HTTP failure into the machine-routable status taxonomy. An
+ * auth error (401/403) is refined by the body message: Tavily reports
+ * exhausted balances as a message containing credit/quota wording, which the
+ * caller must act on differently from an outright invalid key.
+ * @param status - the HTTP status.
+ * @param message - the best-effort parsed error message.
+ * @returns the status code.
+ */
+function classifyTavilyHttpStatus(status: number, message: string): TavilyStatusCodes {
+  if (status === 401 || status === 403) {
+    return /credit|balance|insufficient|quota/iu.test(message) ? 'insufficient_credits' : 'invalid_key'
+  }
+  if (status === 429) return 'rate_limited'
+  if (status >= 500) return 'server_down'
+  if (status === 408) return 'timeout'
+  return 'http'
+}
+
+/**
+ * True when the resolved options describe a recency-sensitive search — news or
+ * finance topics, or any explicit time window — which the fresh-query bypass
+ * keeps out of the result cache.
+ * @param options - the operation's option snapshot.
+ * @returns whether caching would risk serving a stale "right now" answer.
+ */
+function isFreshSensitive(options: TavilySearchProviderOptions): boolean {
+  return options.topic === 'news'
+    || options.topic === 'finance'
+    || options.timeRange !== undefined
+    || options.days !== undefined
+    || options.startDate !== undefined
+    || options.endDate !== undefined
+}
+
+/** Emit one concise debug line only while the operation's debug flag is on. */
+function debugLog(options: TavilySearchProviderOptions, message: string): void {
+  if (options.debug === true) options.log?.(message)
+}
+
+/** Truncate a query excerpt for a log line, never the full user text. */
+function truncateQuery(query: string, max = 80): string {
+  return query.length > max ? `${query.slice(0, max)}…` : query
+}
+
+/** One-line description of a search failure for the debug log. */
+function describeSearchError(error: unknown): string {
+  if (error instanceof WebError) return `${error.code ?? 'WEB_PROVIDER_ERROR'}: ${error.message}`
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** True for a fetch/`AbortSignal` abort, surfaced as `WEB_ABORTED`. */

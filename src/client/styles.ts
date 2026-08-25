@@ -79,6 +79,19 @@ const CSS = `
 .dsh-tavily-wiring-title { margin: 0 0 4px; font-size: 12px; font-weight: 600; line-height: 1.5; color: var(--dsw-alias-label-primary); }
 .dsh-tavily-wiring-copy { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
 .dsh-tavily-wiring-code { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--dsw-alias-bg-module-platform); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); white-space: pre; overflow-x: auto; }
+.dsh-tavily-status-area { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0 0; }
+.dsh-tavily-status { border-radius: 999px; padding: 2px 10px; font-size: 12px; line-height: 1.5; font-weight: 500; white-space: nowrap; }
+.dsh-tavily-status-idle { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-tertiary); }
+.dsh-tavily-status-checking { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }
+.dsh-tavily-status-ok { background: color-mix(in srgb, var(--dsw-alias-label-success, #2fb344) 18%, transparent); color: var(--dsw-alias-label-success, var(--dsw-alias-label-primary)); }
+.dsh-tavily-status-low { background: color-mix(in srgb, var(--dsw-alias-label-warning, #d9a406) 18%, transparent); color: var(--dsw-alias-label-warning, var(--dsw-alias-label-primary)); }
+.dsh-tavily-status-error { background: color-mix(in srgb, var(--dsw-alias-label-error) 18%, transparent); color: var(--dsw-alias-label-error); }
+.dsh-tavily-status-no-key { background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-tertiary); }
+.dsh-tavily-status-detail { flex-basis: 100%; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.dsh-tavily-status-error, .dsh-tavily-status-hint { flex-basis: 100%; margin: 0; font-size: 12px; line-height: 1.5; }
+.dsh-tavily-status-error { color: var(--dsw-alias-label-error); }
+.dsh-tavily-status-hint { color: var(--dsw-alias-label-tertiary); }
+.dsh-tavily-preset-area { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
 .dsh-tavily-reset:hover:not(:disabled) { color: var(--dsw-alias-label-primary); }
 .dsh-tavily-reset:disabled { cursor: default; }
 .dsh-tavily-input {

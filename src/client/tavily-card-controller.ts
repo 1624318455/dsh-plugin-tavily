@@ -94,12 +94,21 @@ export interface TavilySettings {
   engine?: 'tavily' | 'deepseek'
 }
 
-/** Result of the card's browser-side API connectivity test. */
+/**
+ * Result of the card's browser-side API connectivity test.
+ */
 export interface TavilyApiTestState {
   status: 'idle' | 'testing' | 'success' | 'error'
   /** Error detail when `status` is `error`; empty otherwise. */
   detail: string
+  /** Machine-routable failure class when `status` is `error`. */
+  code?: TavilyErrorCode
 }
+
+/** Failure taxonomy the card renders a localized explanation for. */
+export type TavilyErrorCode =
+  | 'invalid_key' | 'insufficient_credits' | 'rate_limited'
+  | 'server_down' | 'timeout' | 'network' | 'http' | 'other'
 
 /** Live cost preview derived from the card's current drafts (no API call). */
 export interface TavilyEstimate {
@@ -109,11 +118,56 @@ export interface TavilyEstimate {
   tokenHint: number
 }
 
+/**
+ * One parameter preset: stages a set of advanced fields at once (the user still
+ * presses Save). Presets never touch config-covered (yaml-pinned) fields.
+ */
+export interface TavilyPreset {
+  /** Stable preset id referenced by the card's select. */
+  id: string
+  /** Field/value pairs staged when the preset is applied. */
+  fields: ReadonlyArray<readonly [field: string, value: string]>
+}
+
+/** Presets the card offers: deep research, quick summary, live news. */
+export const TAVILY_PRESETS: Record<string, TavilyPreset> = {
+  'deep-research': {
+    id: 'deep-research',
+    fields: [
+      ['searchDepth', 'advanced'],
+      ['maxResults', '10'],
+      ['includeRawContent', 'markdown'],
+      ['chunksPerSource', '3'],
+      ['includeAnswer', 'advanced'],
+    ],
+  },
+  'quick-summary': {
+    id: 'quick-summary',
+    fields: [
+      ['searchDepth', 'basic'],
+      ['maxResults', '3'],
+      ['includeRawContent', 'false'],
+      ['includeAnswer', 'advanced'],
+    ],
+  },
+  'news-live': {
+    id: 'news-live',
+    fields: [
+      ['topic', 'news'],
+      ['timeRange', 'day'],
+      ['maxResults', '8'],
+      ['searchDepth', 'basic'],
+    ],
+  },
+}
+
 /** Result of the card's browser-side credit-usage check (`GET /usage`). */
 export interface TavilyUsageState {
   status: 'idle' | 'checking' | 'success' | 'error'
   /** Error detail when `status` is `error`; empty otherwise. */
   detail: string
+  /** Machine-routable failure class when `status` is `error`. */
+  code?: TavilyErrorCode
   /** Key-scoped usage when the check succeeded. */
   key?: { used?: number; limit?: number | null; searchUsed?: number }
   /** Account plan name when the check succeeded. */
@@ -129,6 +183,37 @@ interface TavilyUsageResponse {
   }
   account?: { current_plan?: string }
 }
+
+/** Status indicator state reported by the host `/api/tavily-status` route. */
+export interface TavilyStatusState {
+  status: 'idle' | 'checking' | 'ok' | 'low' | 'error' | 'no-key'
+  /** Human-readable detail when `status` is `error`. */
+  detail: string
+  /** Machine-routable code echoed from the host (error or low/ok). */
+  code?: string
+  /** Remaining credits when the check succeeded. */
+  remaining?: number
+  /** Credit limit; null/absent means the plan does not cap key usage. */
+  limit?: number | null
+  /** Account plan name when the check succeeded. */
+  plan?: string
+  /** Wall-clock stamp of the last completed check. */
+  checkedAt?: number
+}
+
+/** Structured `/api/tavily-status` response (client bundle mirrors the Host type). */
+interface TavilyStatusResponse {
+  ok: boolean
+  code: string
+  error?: string
+  remaining?: number
+  limit?: number | null
+  searchUsed?: number
+  plan?: string
+}
+
+/** How often the card may auto-check status; the refresh button forces a check. */
+const STATUS_CHECK_TTL_MS = 60_000
 
 
 /** What the credentials domain last reported, and for which reference. */
@@ -181,6 +266,12 @@ export interface TavilyCardState extends CardShell {
   retryMaxAttempts: CardFieldState
   /** Query-cache TTL in seconds. */
   cacheTtlSeconds: CardFieldState
+  /** Query-cache LRU cap (max cached entries). */
+  cacheMaxEntries: CardFieldState
+  /** Skip the result cache for recency-sensitive searches. */
+  cacheBypassFresh: CardFieldState
+  /** Concise per-search debug logging. */
+  debug: CardFieldState
   /** Request timeout in milliseconds. */
   timeout: CardFieldState
   /** Engine switch (Tavily vs official DeepSeek). */
@@ -197,6 +288,8 @@ export interface TavilyCardState extends CardShell {
   estimate: TavilyEstimate
   /** Last credit-usage check outcome. */
   usage: TavilyUsageState
+  /** Credit/connectivity status indicator (stored-key, host-checked). */
+  status: TavilyStatusState
 }
 
 /** The registration-side face the Tavily card's slot entry injects. */
@@ -209,6 +302,10 @@ export interface TavilyCardFace extends CardActions {
   testApi: () => void
   /** Check current credit usage against Tavily with the drafts currently on screen. */
   checkUsage: () => void
+  /** Stage one parameter preset's fields (config-covered fields are skipped). */
+  applyPreset: (id: string) => void
+  /** Re-check the stored-key status against the host; `true` bypasses the throttle. */
+  refreshStatus: (force?: boolean) => void
 }
 
 /** Bridges the `web-search-tavily` scope and the credentials domain onto the card. */
@@ -218,6 +315,9 @@ export class TavilyCardController {
   private credential: CredentialState = { ref: '', configured: false, writable: true }
   private apiTest: TavilyApiTestState = { status: 'idle', detail: '' }
   private usage: TavilyUsageState = { status: 'idle', detail: '' }
+  private status: TavilyStatusState = { status: 'idle', detail: '' }
+  private lastStatusCheck = 0
+  private statusInFlight = false
 
   /**
    * @param scope - the bound settings scope for the `web-search-tavily` namespace.
@@ -250,13 +350,16 @@ export class TavilyCardController {
         textField('country'),
         numberField('retryMaxAttempts', { min: 0, max: 5, integer: true }),
         numberField('cacheTtlSeconds', { min: 0, max: 3600, integer: true }),
+        numberField('cacheMaxEntries', { min: 1, max: 10000, integer: true }),
+        booleanField('cacheBypassFresh', true),
+        booleanField('debug', false),
         selectField('engine', ['tavily', 'deepseek']),
       ],
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
     this.store = this.form.bind(() => this.projection())
     scope.subscribe(() => { void this.readCredential() })
-    void this.readCredential()
+    void this.readCredential().then(() => { void this.refreshStatus() })
   }
 
   private projection(): TavilyCardState {
@@ -281,6 +384,9 @@ export class TavilyCardController {
       country: this.form.field('country'),
       retryMaxAttempts: this.form.field('retryMaxAttempts'),
       cacheTtlSeconds: this.form.field('cacheTtlSeconds'),
+      cacheMaxEntries: this.form.field('cacheMaxEntries'),
+      cacheBypassFresh: this.form.field('cacheBypassFresh'),
+      debug: this.form.field('debug'),
       timeout: this.form.field('timeout'),
       engine: this.form.field('engine'),
       apiKey: this.form.field(API_KEY_FIELD),
@@ -289,6 +395,7 @@ export class TavilyCardController {
       apiTest: this.apiTest,
       estimate: this.computeEstimate(),
       usage: this.usage,
+      status: this.status,
     }
   }
 
@@ -339,8 +446,12 @@ export class TavilyCardController {
       writable: view?.writable ?? true,
     }
     if (next.configured === this.credential.configured && next.writable === this.credential.writable) return
+    const configuredChanged = next.configured !== this.credential.configured
     this.credential = next
     this.store.set(this.projection())
+    // A key appearing or disappearing changes what the status indicator means;
+    // force the check when it flips so the badge does not linger on stale state.
+    if (configuredChanged) void this.refreshStatus(true)
   }
 
   /**
@@ -366,6 +477,8 @@ export class TavilyCardController {
       ...this.form.actions(),
       testApi: () => { void this.runApiTest() },
       checkUsage: () => { void this.runUsageCheck() },
+      applyPreset: (id) => { this.applyPreset(id) },
+      refreshStatus: (force) => { void this.refreshStatus(force) },
     }
   }
 
@@ -406,20 +519,26 @@ export class TavilyCardController {
         }),
       })
       if (!response.ok) {
-        let detail = `HTTP ${response.status}`
+        const status = response.status
+        let detail = `HTTP ${status}`
         try {
           const body = await response.json() as { detail?: { error?: string }; error?: string; message?: string }
           detail = body.detail?.error ?? body.error ?? body.message ?? detail
         } catch (_errorBodyReadFailure) {
           // Keep the HTTP status detail.
         }
-        throw new Error(detail)
+        const classified = classifyTavilyError(status, detail)
+        this.apiTest = { status: 'error', detail: classified.message, code: classified.code }
+        this.store.set(this.projection())
+        return
       }
       this.apiTest = { status: 'success', detail: '' }
     } catch (error: unknown) {
+      // A fetch rejection is a network-layer failure: no HTTP status to classify.
       this.apiTest = {
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
+        code: 'network',
       }
     }
     this.store.set(this.projection())
@@ -454,14 +573,18 @@ export class TavilyCardController {
         },
       })
       if (!response.ok) {
-        let detail = `HTTP ${response.status}`
+        const status = response.status
+        let detail = `HTTP ${status}`
         try {
           const body = await response.json() as { detail?: { error?: string }; error?: string; message?: string }
           detail = body.detail?.error ?? body.error ?? body.message ?? detail
         } catch (_errorBodyReadFailure) {
           // Keep the HTTP status detail.
         }
-        throw new Error(detail)
+        const classified = classifyTavilyError(status, detail)
+        this.usage = { status: 'error', detail: classified.message, code: classified.code }
+        this.store.set(this.projection())
+        return
       }
       const parsed = await response.json() as TavilyUsageResponse
       this.usage = {
@@ -478,9 +601,85 @@ export class TavilyCardController {
       this.usage = {
         status: 'error',
         detail: error instanceof Error ? error.message : String(error),
+        code: 'network',
       }
     }
     this.store.set(this.projection())
+  }
+
+  /**
+   * Stage one preset's field values. Config-covered (yaml-pinned) fields are
+   * skipped — the configuration layer wins and the badge already says so. Each
+   * staged value still goes through the form's normal save flow.
+   * @param id - the preset id; unknown ids are ignored.
+   */
+  private applyPreset(id: string): void {
+    const preset = TAVILY_PRESETS[id]
+    if (preset === undefined) return
+    for (const [field, value] of preset.fields) {
+      if (this.form.field(field).configCovered) continue
+      this.form.actions().edit(field, value)
+    }
+  }
+
+  /**
+   * Re-check the configured key's credit status through the host route, which
+   * can read the stored key (the browser cannot). The check costs no search
+   * credits (`GET /usage`). Auto-checks are throttled; the card's button forces
+   * one and always falls through.
+   * @param force - bypass the throttle (the refresh button passes true).
+   */
+  private async refreshStatus(force = false): Promise<void> {
+    if (this.statusInFlight) return
+    const now = Date.now()
+    if (!force && now - this.lastStatusCheck < STATUS_CHECK_TTL_MS) return
+    if (!this.credential.configured) {
+      this.status = { status: 'no-key', detail: '', checkedAt: now }
+      this.lastStatusCheck = now
+      this.store.set(this.projection())
+      return
+    }
+    this.statusInFlight = true
+    this.lastStatusCheck = now
+    this.status = { status: 'checking', detail: '' }
+    this.store.set(this.projection())
+    try {
+      const response = await fetch('/api/tavily-status', {
+        method: 'GET',
+        headers: { 'accept': 'application/json' },
+      })
+      const body = await response.json() as TavilyStatusResponse
+      if (body.code === 'no-key') {
+        this.status = { status: 'no-key', detail: '', checkedAt: Date.now() }
+      } else if (!body.ok) {
+        this.status = {
+          status: 'error',
+          detail: body.error ?? '',
+          code: body.code,
+          checkedAt: Date.now(),
+        }
+      } else {
+        this.status = {
+          status: body.code === 'low' ? 'low' : 'ok',
+          detail: '',
+          code: body.code,
+          remaining: body.remaining,
+          limit: body.limit,
+          plan: body.plan,
+          checkedAt: Date.now(),
+        }
+      }
+    } catch (error: unknown) {
+      this.status = {
+        status: 'error',
+        detail: error instanceof Error ? error.message : String(error),
+        code: 'network',
+        checkedAt: Date.now(),
+      }
+    } finally {
+      this.statusInFlight = false
+      this.store.set(this.projection())
+    }
   }
 
   /**
@@ -519,4 +718,23 @@ function refOf(snapshot: SettingsScopeSnapshot<TavilySettings>): string {
 function parsePositiveInt(text: string, fallback: number): number {
   const parsed = Number(text.trim())
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+/**
+ * Classify a browser-side Tavily HTTP failure into the card's error taxonomy.
+ * Mirrors the host's `classifyTavilyHttpStatus`: an auth error whose body
+ * mentions credit/quota wording is a balance problem, not a wrong key.
+ * @param status - the HTTP status.
+ * @param message - the best-effort parsed error message.
+ * @returns the message to display and the machine-routable code.
+ */
+function classifyTavilyError(status: number, message: string): { message: string; code: TavilyErrorCode } {
+  if (status === 401 || status === 403) {
+    const code = /credit|balance|insufficient|quota/iu.test(message) ? 'insufficient_credits' : 'invalid_key'
+    return { message, code }
+  }
+  if (status === 429) return { message, code: 'rate_limited' }
+  if (status >= 500) return { message, code: 'server_down' }
+  if (status === 408) return { message, code: 'timeout' }
+  return { message, code: 'http' }
 }
