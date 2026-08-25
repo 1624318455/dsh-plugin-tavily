@@ -112,3 +112,12 @@ try {
 } finally {
   if (HOME_CREATED) rmSync(DSH_HOME, { recursive: true, force: true })
 }
+
+// dsh web may leave a descendant process holding the stdio pipes after the
+// server itself has exited; that would keep this script's event loop alive
+// and hang the CI step long past a passed smoke (observed on the 0.1.1-rc.2
+// leg: the ok line printed at 16:47:59, the job only ended when its 15-minute
+// timeout cancelled it). Exit explicitly so the runner sees a finished step.
+// Everything above the try/finally has already run; on an assertion throw the
+// finally still cleans up and the uncaught error exits with code 1 first.
+process.exit(0)
