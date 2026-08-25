@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast feedback: typecheck, build, and the in-repo contract test against the
+  # dev-time SlotCore (rc.6). Builds first so the artifact checks can run.
+  check:
+    name: typecheck + build + contract test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+      - name: Contract test (dev SlotCore)
+        run: pnpm run test:contract
+
+  # The slot-contract drift that caused issue #1 lives in the published
+  # `@deepseek-ai/dsh-client-ui-slots` core per release: the same shipped
+  # client bundle must register under the rc.6 LIST runtime and the 0.1.1-rc.2
+  # KEYED runtime. Runs the artifact-level contract test against each real
+  # core version.
+  slot-contract-matrix:
+    name: slot contract vs real SlotCore (${{ matrix.slots }})
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        slots: ['0.1.0-rc.6', '0.1.0-rc.8', '0.1.1-rc.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm build
+      - name: Install SlotCore ${{ matrix.slots }} into a scratch prefix
+        run: npm install --prefix /tmp/slots-matrix --no-save --no-package-lock @deepseek-ai/dsh-client-ui-slots@${{ matrix.slots }}
+      - name: Contract test against SlotCore ${{ matrix.slots }}
+        run: SLOTS_PACKAGE_DIR=/tmp/slots-matrix/node_modules pnpm run test:contract
+
+  # Install→serve wiring against real dsh releases (the CLI ships its own
+  # platform, so each leg boots a self-consistent runtime). Boots headless,
+  # fetches the served client bundle, and asserts the dual-field card
+  # registration is what actually ships.
+  profile-boot:
+    name: real profile boot smoke (dsh ${{ matrix.dsh }})
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.1.0-rc.6', '0.1.1-rc.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm build
+      - name: Pack the plugin tarball
+        run: pnpm pack --pack-destination "$RUNNER_TEMP"
+      # Scoped-name pack output, e.g. dsh-external-dsh-plugin-tavily-0.6.1.tgz
+      - name: Boot smoke on dsh ${{ matrix.dsh }}
+        env:
+          PLUGIN_TGZ: ${{ runner.temp }}/dsh-external-dsh-plugin-tavily-0.6.1.tgz
+          DSH_CMD: npx --yes --package @deepseek-ai/dsh@${{ matrix.dsh }} dsh
+        run: node tests/profile-boot-smoke.mjs

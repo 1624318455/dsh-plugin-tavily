@@ -267,9 +267,22 @@ Deferred (deliberately, see the optimization review): **search-then-extract (top
 pnpm install
 pnpm run build          # tsdown → lib/index.mjs (host) + lib/client.cjs (browser, committed)
 pnpm run typecheck      # tsc --noEmit
+pnpm run test:contract  # slot-contract drift guard (no network)
 node tests/decode-check.mjs   # schema round-trip check (no network)
 pnpm test               # real-API smoke: needs TAVILY_API_KEY
+node tests/profile-boot-smoke.mjs   # install→serve wiring smoke: needs PLUGIN_TGZ
 ```
+
+The `settings.plugin.item` slot contract drifted across released DSH versions —
+`0.1.0-rc.6` declares it a **list** slot (registration requires `id`), while
+`0.1.1-rc.x` declares it **keyed** (registration requires `key`). The card
+registers with **both** `key` and `id` (+ list-side `order`), so one
+registration is accepted by every released runtime. `pnpm run test:contract`
+parses the shipped `lib/client.cjs` and feeds its registration shape into the
+real `SlotCore` under both declaration kinds; the CI matrix
+(`.github/workflows/ci.yml`) reruns it against the published `dsh-client-ui-slots`
+cores (`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`) and boots a real dsh profile
+per release (`0.1.0-rc.6` / `0.1.1-rc.2`) to verify the served bundle.
 
 `lib/` is committed so the plugin installs without a build step (no `prepare` script, no pnpm build-script allowlisting). The `@deepseek-ai/*` seam and framework packages are **externalized** — the harness provides them at runtime, declared as `peerDependencies`. The browser bundle (`lib/client.cjs`) is a CJS module-loader factory: it `require()`s only the client module table's platform packages and inlines the plugin's own card code, so it needs no extra install-time resolution. `@deepseek-ai/dsh-base` is a devDependency only, so the smoke test can resolve the harness runtime closure.
 
