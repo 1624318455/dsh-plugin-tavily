@@ -271,6 +271,17 @@ pnpm run test:contract  # slot-contract drift guard (no network)
 node tests/decode-check.mjs   # schema round-trip check (no network)
 pnpm test               # real-API smoke: needs TAVILY_API_KEY
 node tests/profile-boot-smoke.mjs   # install→serve wiring smoke: needs PLUGIN_TGZ
+node tests/browser-e2e.mjs          # real-browser load-outcome gate: needs PLUGIN_TGZ + Chromium
+```
+
+The **browser E2E** (`tests/browser-e2e.mjs`) is the layer that reproduces the
+issue #1 scenario: it boots a real `dsh web`, drives the first-run wizard in a
+real browser, and asserts the plugin loads — the "Failed to load plugins /
+list slot requires options.id" banner is the exact symptom it fails on
+(verified locally on genuine rc.6 with both the broken key-only registration
+and the fixed dual-field one). Used by the CI `browser-e2e` matrix; the headless
+Chrome stall it can hit on loaded dev machines is handled by per-phase time
+budgets, a 300s watchdog, and a retry in CI.
 ```
 
 The `settings.plugin.item` slot contract drifted across released DSH versions —

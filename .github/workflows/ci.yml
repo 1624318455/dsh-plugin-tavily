@@ -92,7 +92,14 @@ jobs:
       - name: Install dsh CLI ${{ matrix.dsh }}
         run: |
           mkdir -p "$RUNNER_TEMP/dshcli"
-          pnpm --dir "$RUNNER_TEMP/dshcli" init
+          pnpm --dir "$RUNNER_TEMP/dshcli" init > /dev/null 2>&1
+          # The published @deepseek-ai/dsh@0.1.0-rc.6 today resolves rc.8
+          # settings-plugins, which already declare settings.plugin.item KEYED —
+          # pin the genuine rc.6 (LIST) contract so this leg really exercises
+          # the issue #1 scenario instead of silently testing a newer runtime.
+          if [ "${{ matrix.dsh }}" = "0.1.0-rc.6" ]; then
+            printf "overrides:\n  '@deepseek-ai/dsh-client-ui-settings-plugins': 0.1.0-rc.6\n  '@deepseek-ai/dsh-client-ui-slots': 0.1.0-rc.6\n" > "$RUNNER_TEMP/dshcli/pnpm-workspace.yaml"
+          fi
           pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
       # Scoped-name pack output: dsh-external-dsh-plugin-tavily-<version>.tgz.
       # Resolve it at runtime so version bumps never desync the filename
@@ -103,3 +110,57 @@ jobs:
         run: |
           export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
           node tests/profile-boot-smoke.mjs
+
+  # The TRUE user scenario from issue #1: a real browser applies the plugin's
+  # client half against the runtime's slot declaration. Drives first-run
+  # onboarding and asserts the LOAD OUTCOME — no "Failed to load plugins"
+  # banner in page text, console or page errors — the exact symptom the
+  # reporter pasted. Verified locally with both polarities against a genuine
+  # rc.6 stack (key-only variant reproduces the banner verbatim; the fixed
+  # plugin loads clean). The settings card render sits one click deeper and
+  # proved too timing-sensitive to gate on, so it is not part of the check.
+  browser-e2e:
+    name: real browser E2E (dsh ${{ matrix.dsh }})
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.1.0-rc.6', '0.1.1-rc.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm build
+      - name: Pack the plugin tarball
+        run: pnpm pack --pack-destination "$RUNNER_TEMP"
+      - name: Install dsh CLI ${{ matrix.dsh }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dshcli"
+          pnpm --dir "$RUNNER_TEMP/dshcli" init > /dev/null 2>&1
+          if [ "${{ matrix.dsh }}" = "0.1.0-rc.6" ]; then
+            printf "overrides:\n  '@deepseek-ai/dsh-client-ui-settings-plugins': 0.1.0-rc.6\n  '@deepseek-ai/dsh-client-ui-slots': 0.1.0-rc.6\n" > "$RUNNER_TEMP/dshcli/pnpm-workspace.yaml"
+          fi
+          pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
+      - name: Browser E2E on dsh ${{ matrix.dsh }}
+        env:
+          DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
+        run: |
+          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
+          # The load-outcome gate (no "Failed to load plugins" banner) is the
+          # deterministic symptom check for issue #1. Headless Chrome can stall
+          # for unrelated environmental reasons, so: OS-level `timeout` per
+          # attempt (ubuntu runners have it) plus one retry for environment
+          # flake — genuine loader-failure markers still fail both attempts.
+          for i in 1 2; do
+            timeout 300 node tests/browser-e2e.mjs && exit 0
+            echo "browser E2E attempt $i failed (exit $?)"
+          done
+          exit 1

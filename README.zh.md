@@ -271,6 +271,10 @@ pnpm run test:contract  # slot 契约漂移守卫（不需联网）
 node tests/decode-check.mjs   # schema 往返校验（不需联网）
 pnpm test               # 真实 API 冒烟：需要 TAVILY_API_KEY
 node tests/profile-boot-smoke.mjs   # 安装→服务连通冒烟：需要 PLUGIN_TGZ
+node tests/browser-e2e.mjs          # 真实浏览器加载结果门禁：需要 PLUGIN_TGZ + Chromium
+```
+
+**浏览器 E2E**（`tests/browser-e2e.mjs`）是复现 issue #1 场景的那一层：它能启动真实 `dsh web`、在真实浏览器里走完首启向导，并断言插件加载正常——"Failed to load plugins / list slot requires options.id" 横幅正是它要拦截的确切症状（已在真 rc.6 上双向验证：坏掉的 key-only 注册原样复现、修复后的双字段注册干净通过）。CI 的 `browser-e2e` 矩阵使用它；重载开发机上可能偶发的无头 Chrome 冻结，由阶段级时间预算、300s 看门狗与 CI 内的一次重试兜底。
 ```
 
 `settings.plugin.item` 插槽契约在不同 DSH 发布版之间发生过漂移——`0.1.0-rc.6` 声明为 **list** 插槽（注册要求 `id`），而 `0.1.1-rc.x` 声明为 **keyed**（注册要求 `key`）。卡片注册**同时携带** `key` 与 `id`（外加 list 侧 `order`），因此同一份注册可被所有已发布运行时接受。`pnpm run test:contract` 会解析产物 `lib/client.cjs`，把其中的注册形状喂给真实 `SlotCore` 在两种声明形态下验证；CI 矩阵（`.github/workflows/ci.yml`）还会针对已发布的 `dsh-client-ui-slots` 核心（`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`）重跑，并按发布版（`0.1.0-rc.6` / `0.1.1-rc.2`）各启动一次真实 dsh profile 验证实际服务的 bundle。
