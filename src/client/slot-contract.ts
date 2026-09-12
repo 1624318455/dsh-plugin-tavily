@@ -1,7 +1,7 @@
 /**
  * Local SlotMap contract for `settings.plugin.item`.
  *
- * This slot's cardinality is VERSION-DEPENDENT across the `^0.1.0-rc.6` range
+ * This slot's cardinality is VERSION-DEPENDENT across the `>=0.1.0-rc.6` range
  * the plugin declares — the contract drifted between releases:
  *
  * - `0.1.0-rc.6` (published when the plugin shipped): the slot is a LIST slot.
@@ -10,7 +10,7 @@
  *   `SlotCore.register` for list slots REQUIRES `options.id` and ignores `key`
  *   — a key-only registration throws `list slot "settings.plugin.item"
  *   requires options.id` and takes the whole plugin down (issue #1).
- * - `0.1.1-rc.x` (the current harness; what `^0.1.0-rc.6` resolves to on a
+ * - `0.1.1-rc.x` (the current harness; what `>=0.1.0-rc.6` resolves to on a
  *   fresh install): the slot is KEYED. `dsh-client-ui-settings-plugins`
  *   declares `kind: "keyed"`, built-ins register by `key` (`shell` /
  *   `agent-loop` / `web-search-deepseek`), and `SlotCore.register` REQUIRES

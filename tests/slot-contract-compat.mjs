@@ -86,6 +86,29 @@ const orderMatch = /const CARD_ORDER = (\d+)/.exec(bundle)
 assert.ok(orderMatch, 'shipped bundle must define const CARD_ORDER')
 const shippedOrder = Number(orderMatch[1])
 
+// Fiber-inject guard (dsh-plugin-tts@a00b357 class): the client runner creates
+// the entry as ctx.plugin({ inject, apply }) with inject waiting, so apply
+// only runs after the declared services are available. Without the
+// declaration, services can be unavailable at apply time and the card
+// silently no-ops. The bundle must export inject including "slots" and fail
+// loud when a service is missing (never `if (!slots) return`).
+assert.match(
+  bundle,
+  /const inject = \[[^\]]*"slots"[^\]]*\]/,
+  'shipped bundle must declare fiber inject including "slots"',
+)
+for (const service of ['slots', 'locale', 'connection', 'remote', 'settingsScope']) {
+  assert.ok(
+    bundle.includes(`"${service}"`) && bundle.includes(`${service} service unavailable`),
+    `shipped bundle must resolve "${service}" with a fail-loud guard`,
+  )
+}
+assert.doesNotMatch(
+  bundle,
+  /if \(!slots\) return/,
+  'shipped bundle must never silently early-return when slots is missing',
+)
+
 // The exact dual-field shape the bundle registers with (locale/inject are
 // irrelevant to the slot-core contract, so only the cell fields are probed).
 const CARD = { key: shippedKey, id: shippedKey, order: shippedOrder }

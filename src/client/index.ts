@@ -44,24 +44,50 @@ export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
-  const { api } = ctx.get('connection') as ConnectionHandle
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'web-search-tavily: card dictionaries')
+  // Service resolution (fiber inject waiting): the client runner creates
+  // the entry as ctx.plugin({ inject, apply }), so apply only runs after
+  // the declared services are available. Prefer the new-runtime direct
+  // property with a ctx.get fallback for older runtimes, and fail loud —
+  // a silent no-op would blank the whole card (same class as
+  // dsh-plugin-tts@a00b357, where slots was unavailable at apply time).
+  const ctxAny = ctx as unknown as Record<string, any>
+  const viaGet = (serviceName: string): any => {
+    if (typeof ctxAny.get !== 'function') return undefined
+    try {
+      return ctxAny.get(serviceName)
+    } catch {
+      return undefined
+    }
+  }
+  const slots = ctxAny.slots ?? viaGet('slots')
+  if (!slots) throw new Error('[dsh-plugin-tavily] slots service unavailable')
+  const locale = ctxAny.locale ?? viaGet('locale')
+  if (!locale) throw new Error('[dsh-plugin-tavily] locale service unavailable')
+  const connection = ctxAny.connection ?? viaGet('connection')
+  if (!connection) throw new Error('[dsh-plugin-tavily] connection service unavailable')
+  const remote = ctxAny.remote ?? viaGet('remote')
+  if (!remote) throw new Error('[dsh-plugin-tavily] remote service unavailable')
+  const settingsScope = ctxAny.settingsScope ?? viaGet('settingsScope')
+  if (!settingsScope) throw new Error('[dsh-plugin-tavily] settingsScope service unavailable')
+
+  const { api } = connection as ConnectionHandle
+  ctx.effect(() => locale.register(NS, { zh, en }), 'web-search-tavily: card dictionaries')
   ctx.effect(() => injectCardStyles(), 'web-search-tavily: card styles')
 
-  const controller = new TavilyCardController(ctx.settingsScope.bind({ namespace: TAVILY_NS }), api)
+  const controller = new TavilyCardController(settingsScope.bind({ namespace: TAVILY_NS }), api)
 
   // The credential a card reports is not part of any settings section, so its
   // scope publishes nothing when one is written. This is the only signal that
   // a key written on another surface reached the Host.
   ctx.effect(
-    () => ctx.remote.$on('credentials/updated', (ref) => { controller.refreshCredential(ref) }),
+    () => remote.$on('credentials/updated', (ref: string) => { controller.refreshCredential(ref) }),
     'web-search-tavily: credential invalidations',
   )
 
   // One registration, both slot contracts. `settings.plugin.item` shipped as a
   // LIST slot in the published rc.6 runtime (register requires `id`; built-ins
   // use id: 'bash' / 'agent-loop' / 'web-search'); later runs (0.1.1-rc.x, what
-  // `^0.1.0-rc.6` resolves to on a fresh install) declare it KEYED (register
+  // `>=0.1.0-rc.6` resolves to on a fresh install) declare it KEYED (register
   // requires `key`; built-ins use key: 'shell' / 'agent-loop' /
   // 'web-search-deepseek'). Both SlotCore.register generations validate only
   // their own field, never cross-check the other, and store whichever of
@@ -81,8 +107,8 @@ export function apply(ctx: ClientContext): void {
   } as const
   ctx.effect(
     () =>
-      ctx.slots.inject('settings.plugin.item', function* () {
-        yield ctx.slots.register(cardOptions, TavilyCard)
+      slots.inject('settings.plugin.item', function* () {
+        yield slots.register(cardOptions, TavilyCard)
       }),
     'web-search-tavily: settings card',
   )
