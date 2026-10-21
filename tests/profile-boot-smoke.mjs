@@ -3,16 +3,16 @@
  *
  * Installs the packed plugin into a fresh dsh web profile, boots `dsh web`
  * headless, and asserts the server comes up, the plugin's client bundle is
- * served with the dual-field card registration (`key` + `id` + `order`), and
- * no plugin-load failure markers appear in the boot log. This is the
- * install→serve wiring check; the slot-contract semantics of the served
- * registration are pinned separately by `tests/slot-contract-compat.mjs`
- * (run per `@deepseek-ai/dsh-client-ui-slots` version).
+ * served with the current card registration (`id` + `order` into the
+ * `plugins.item` slot), and no plugin-load failure markers appear in the boot
+ * log. This is the install→serve wiring check; the slot-contract semantics of
+ * the served registration are pinned separately by
+ * `tests/slot-contract-compat.mjs` (run per `@deepseek-ai/dsh-client-ui-slots`
+ * version).
  *
  * Env:
  *   PLUGIN_TGZ       path to the packed plugin tarball (required)
- *   DSH_CMD          dsh CLI invocation (default `dsh`; e.g.
- *                    `npx --yes --package @deepseek-ai/dsh@0.1.0-rc.6 dsh`)
+ *   DSH_CMD          dsh CLI invocation (default `dsh`)
  *   SMOKE_DSH_HOME   profile root (default: a fresh temp dir; the ambient
  *                    DSH_HOME is deliberately NEVER used, so a developer's
  *                    real profile can't be touched by accident)
@@ -36,13 +36,33 @@ const explicitHome = process.env.SMOKE_DSH_HOME
 const DSH_HOME = explicitHome ?? mkdtempSync(join(tmpdir(), 'dsh-profile-smoke-'))
 const HOME_CREATED = !explicitHome
 const PORT = Number(process.env.PORT ?? 46999)
-const CLIENT_URL = `http://127.0.0.1:${PORT}/plugins/@memef1f1y/dsh-plugin-tavily/client.js`
-
+// The client module registry serves BATCHED bundle URLs (`/plugins/??a,b,c`)
+// and answers only the exact URLs it preloaded — a single-package URL is a
+// 404 on 0.2.x. The batch that carries this plugin is discovered from the
+// served index page, which preloads every bundle batch it composes.
+const PACKAGE_NAME = '@memef1f1y/dsh-plugin-tavily'
 const FAILURE_MARKERS = [
   /Failed to load plugins/i,
   /requires options\.(id|key)/,
   /unhandled|ECONNREFUSED/i,
 ]
+
+/**
+ * Find the served bundle batch that carries this plugin's client half.
+ * @param html - the served index page.
+ * @returns the batch's path (relative to the server root), or undefined.
+ */
+function batchPathFor(html) {
+  // The batch URL ends at the closing quote of the preload link's href. It
+  // carries a `&rev=` parameter, which the HTML escapes as `&amp;` — capture
+  // through the quote and unescape before the request.
+  for (const match of html.matchAll(/plugins\/\?\?[^"']+/g)) {
+    if (match[0].includes(`${PACKAGE_NAME}/client.js`)) {
+      return match[0].replaceAll('&amp;', '&')
+    }
+  }
+  return undefined
+}
 
 function run(cmd, args, opts = {}) {
   // DSH_CMD may itself be a compound command (e.g. `npx --package … dsh`), so
@@ -82,8 +102,63 @@ try {
   const exit = new Promise((resolve) => server.once('exit', (code, sig) => resolve({ code, sig })))
   await waitForPort(PORT)
 
-  // 3. Fetch the served client bundle: 200 + dual-field registration present.
-  const res = await fetch(CLIENT_URL)
+  // The index page is behind the session token dsh prints at startup. The
+  // listen socket opens slightly before that line reaches the pipe, so wait
+  // for the announcement rather than racing it.
+  let token
+  for (let attempt = 0; attempt < 60; attempt++) {
+    token = /[?&]token=([A-Za-z0-9_-]+)/.exec(bootLog)?.[1]
+    if (token !== undefined) break
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  assert.ok(token !== undefined, `boot log must announce the server URL with a token:\n${bootLog}`)
+
+  // 3. Fetch the served client bundle: 200 + the card registration present.
+  //
+  // The bundle is served in a batch, and the batch URL is the one the index
+  // page preloads — so read that page first, then fetch the batch carrying
+  // this plugin.
+  //
+  // The index page answers a valid launch token with a redirect that mints a
+  // session cookie, so follow that redirect BY HAND and keep the cookie jar:
+  // an automatic redirect follow swallows the intermediate Set-Cookie, and
+  // the bundle route is behind the same browser authentication.
+  const jar = new Map()
+  const cookieHeader = () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ')
+  const absorb = (response) => {
+    for (const raw of response.headers.getSetCookie?.() ?? []) {
+      const [pair] = raw.split(';')
+      const index = pair.indexOf('=')
+      if (index > 0) jar.set(pair.slice(0, index).trim(), pair.slice(index + 1).trim())
+    }
+  }
+  const get = async (url) => {
+    let response = await fetch(url, {
+      redirect: 'manual',
+      headers: cookieHeader() === '' ? {} : { cookie: cookieHeader() },
+    })
+    absorb(response)
+    // Follow one redirect by hand so its Set-Cookie reaches the jar.
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      assert.ok(location !== null, `index page redirected without a Location header`)
+      const target = new URL(location, url).href
+      response = await fetch(target, {
+        redirect: 'manual',
+        headers: cookieHeader() === '' ? {} : { cookie: cookieHeader() },
+      })
+      absorb(response)
+    }
+    return response
+  }
+  const index = await get(`http://127.0.0.1:${PORT}/?token=${token}`)
+  assert.equal(index.status, 200, `index page HTTP ${index.status}`)
+  const batchPath = batchPathFor(await index.text())
+  assert.ok(
+    batchPath !== undefined,
+    `served index page must preload a bundle batch carrying ${PACKAGE_NAME}/client.js`,
+  )
+  const res = await get(`http://127.0.0.1:${PORT}/${batchPath}`)
   assert.equal(res.status, 200, `client bundle HTTP ${res.status}`)
   const bundle = await res.text()
   assert.ok(bundle.includes('web-search-tavily'), 'served client bundle must contain the tavily card namespace')
@@ -99,15 +174,28 @@ try {
     !bundle.includes('settings.plugin.item'),
     'served client bundle must not reference the removed settings.plugin.item slot',
   )
-  // The bundler inlines the card's constants, so the registration is asserted
-  // by its shipped VALUES rather than by the identifiers they were written as.
-  assert.ok(
-    /id:\s*"web-search-tavily"/.test(bundle),
-    'served client bundle must register the card under the web-search-tavily id',
+  // The bundler keeps the card's module-scope constants, so the registration
+  // is asserted on the constant and the binding that consumes it — the same
+  // shape `tests/slot-contract-compat.mjs` pins on the built artifact.
+  assert.match(
+    bundle,
+    /const CARD_ID = "web-search-tavily"/,
+    'served client bundle must define the card id',
   )
-  assert.ok(
-    /order:\s*41/.test(bundle),
-    'served client bundle must register the card with its display order',
+  assert.match(
+    bundle,
+    /\bid: CARD_ID\b/,
+    'served client bundle must register the card under that id',
+  )
+  assert.match(
+    bundle,
+    /const CARD_ORDER = \d+/,
+    'served client bundle must define the card display order',
+  )
+  assert.match(
+    bundle,
+    /\border: CARD_ORDER\b/,
+    'served client bundle must register the card with that order',
   )
   // The card reads its section through `ctx.configForms` and addresses the
   // credential namespace it is served under; both must be present in the
@@ -132,7 +220,7 @@ try {
   const hits = FAILURE_MARKERS.filter((m) => m.test(bootLog))
   assert.deepEqual(hits, [], `boot log contains failure markers:\n${bootLog}`)
 
-  console.log(`profile-boot-smoke: ok — ${DSH_HOME} installed, dsh web served the dual-field client bundle (port ${PORT})`)
+  console.log(`profile-boot-smoke: ok — ${DSH_HOME} installed, dsh web served the card's client bundle (port ${PORT})`)
 } finally {
   if (HOME_CREATED) rmSync(DSH_HOME, { recursive: true, force: true })
 }
