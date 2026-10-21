@@ -29,8 +29,10 @@ It registers a `tavily` search provider into the harness's `ctx.web` seam, so th
 
 ## Install
 
+Requires **dsh 0.2.0-rc.2 or newer** (see [Requirements](#requirements)). Install from npm:
+
 ```sh
-dsh plugin --profile web add "github:1624318455/dsh-plugin-tavily#main"
+dsh plugin --profile web add "@memef1f1y/dsh-plugin-tavily"
 ```
 
 During development, install from a local path instead:
@@ -39,7 +41,13 @@ During development, install from a local path instead:
 dsh plugin --profile web add "file:/absolute/path/to/dsh-plugin-tavily"
 ```
 
-The plugin registers the provider and its card only — it does **not** override your profile's chosen search provider.
+Or from the repository's main branch (every merged commit):
+
+```sh
+dsh plugin --profile web add "github:1624318455/dsh-plugin-tavily#main"
+```
+
+The plugin's `cordis.patch.yml` already sets `web.config.searchProvider: tavily`, so installing it **elects Tavily as the search provider for you** — no manual provider selection needed.
 
 ## Enable
 
@@ -90,7 +98,7 @@ or `fetchProvider: firecrawl` in the same `cordis.patch.yml` row. Without a Fire
 The `web_search` tool's output schema is provider-agnostic — the model never sees a provider name, and the API key intentionally lives outside environment variables, so "check the env" is the wrong probe. To confirm the active backend:
 
 - **Provider selection** — `~/.dsh/profiles/web/cordis.patch.yml` has the `web` row with `searchProvider: tavily`.
-- **Plugin loaded** — `~/.dsh/settings.yaml` contains a `web-search-tavily` section (only the plugin's `installSettingsSection` writes it).
+- **Plugin loaded** — the composed profile tree lists the `web-search-tavily` entry (`dsh --profile web --dump-config`).
 - **Credential in place** — `TAVILY_API_KEY` exists in the credentials store (`~/.dsh/.credentials.yaml`), not in the environment.
 - **Result fingerprint** — a Tavily result carries a generated-answer summary in `content`; the built-in DeepSeek provider does not produce one.
 
@@ -147,7 +155,7 @@ Configuration lives in your profile's `cordis.patch.yml` (`~/.dsh/profiles/web/c
 
 ```yaml
 - id: web-search-tavily
-  name: '@dsh-external/dsh-plugin-tavily'
+  name: '@memef1f1y/dsh-plugin-tavily'
   config:
     searchDepth: advanced
     topic: news
@@ -211,28 +219,18 @@ cordis.patch.yml config  >  WebUI card values  >  code defaults
 | `country` | unset | boost results from one country (general topic) | ✓ |
 | `numResults` | `5` | **deprecated alias** for `maxResults` | no (use `maxResults`) |
 
-`apiKeyEnv` stays config-only deliberately: it is an advanced wiring detail. Values saved from the GUI land in `~/.dsh/settings.yaml`'s `web-search-tavily` section. Settings edits apply live — the provider re-reads the section for every operation, so no restart or re-registration is needed after changing a value from the card or the file.
+`apiKeyEnv` stays config-only deliberately: it is an advanced wiring detail. Values saved from the GUI land in the profile's `web-search-tavily` entry (`~/.dsh/profiles/web/cordis.patch.yml`). Settings edits apply live — the provider re-reads the section for every operation, so no restart or re-registration is needed after changing a value from the card or the file.
+
+## Requirements
+
+- **dsh 0.2.0-rc.2 or newer.** The plugin targets the 0.2.x plugin API: the settings form is declared by marking the plugin's `Config` schema fields `.volatile()`, the card reads its section through `ctx.configForms`, and the card registers into the Plugins page's `plugins.item` slot. Older 0.1.x runtimes used a different settings contract and are not supported.
+- **Tavily API key** — paste it into the card, or store `TAVILY_API_KEY` in the credentials store.
 
 ## Platform note (web GUI card visibility)
 
-The web GUI serves a plugin's settings section to the browser only when its namespace is on the apiproxy allowlist (`WEB_SETTINGS_NAMESPACES` in `@deepseek-ai/dsh-host-apiproxy`). As of `0.1.0-rc.6` that list is hardcoded and the "let a plugin expose its own configuration" mechanism is deferred, so a freshly installed third-party card is filtered out even though the section is registered host-side. To make the **Web search (Tavily)** card render, add the namespace to the allowlist in your installed copy and restart dsh:
+**No patch is needed on dsh 0.2.x.** Earlier releases (0.1.x) served a plugin's settings section to the browser only when its namespace was on the apiproxy allowlist, so a third-party card had to be unblocked by hand. That mechanism is gone: the 0.2.x settings domain serves any plugin entry that declares a volatile config schema, and the card registers itself under the Plugins page.
 
-```js
-// ~/.dsh/profiles/node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js
-// in the WEB_SETTINGS_NAMESPACES array:
-"web-search-deepseek",
-"web-search-tavily",   // ← add this line
-```
-
-The provider and all of its functionality work without this patch; only the GUI card is hidden. The patch is overwritten by `pnpm install --force` and by harness upgrades, so re-apply it after re-installing dependencies.
-
-**Apply it with the included script** (idempotent; `--check` only reports):
-
-```sh
-node scripts/patch-apiproxy.mjs --check    # report whether a patch is needed
-node scripts/patch-apiproxy.mjs            # patch every installed profile copy
-node scripts/patch-apiproxy.mjs --profile web   # patch one profile
-```
+The card appears in **设置 → 插件** as **网页搜索（Tavily）** once the plugin is installed and dsh is restarted. It is hidden while the host half is not loaded — the card's registration follows the host's own serving of the `web-search-tavily` namespace.
 
 > **Server-side test of a stored key.** This plugin registers a host probe `POST /api/tavily-probe` that can test Tavily with a **stored** key server-side (keyless when none is set); `TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` / `status()` are the programmatic host-side paths, and `GET /api/tavily-status` backs the card's status indicator. The browser cannot read stored secrets back, so the card's `Test API connection` button still requires re-entering an already-configured key.
 
@@ -247,7 +245,7 @@ High-confidence follow-ups identified in the product analysis:
 - ✅ **Usage / cost panel** — `GET /usage` in the card + live credit/token estimate (implemented).
 - ✅ **429 retry + short cache** — `retry-after`-aware backoff + optional TTL cache (implemented).
 - ✅ **Extract capability** — a Tavily Extract-backed `WebFetchProvider` registered on the existing fetch seam (implemented).
-- ✅ **apiproxy allowlist friction** — an idempotent `scripts/patch-apiproxy.mjs` (implemented).
+- ✅ **apiproxy allowlist friction** — gone in 0.2.x: the settings form is declared by the plugin's own schema (no patch needed).
 - ✅ **Status indicator** — `GET /api/tavily-status` (stored key, no credit cost) + card badge with refresh (implemented).
 - ✅ **Error taxonomy** — connectivity/usage failures classified as invalid key / insufficient credits / rate limited / service down / timeout / network with per-case UI copy (implemented).
 - ✅ **Cache hardening** — LRU cap (`cacheMaxEntries`) + fresh-query bypass (`cacheBypassFresh`) (implemented).
@@ -275,36 +273,40 @@ node tests/browser-e2e.mjs          # real-browser load-outcome gate: needs PLUG
 ```
 
 The **browser E2E** (`tests/browser-e2e.mjs`) is the layer that reproduces the
-issue #1 scenario: it boots a real `dsh web`, drives the first-run wizard in a
-real browser, and asserts the plugin loads — the "Failed to load plugins /
-list slot requires options.id" banner is the exact symptom it fails on
-(verified locally on genuine rc.6 with both the broken key-only registration
-and the fixed dual-field one). Used by the CI `browser-e2e` matrix; the headless
-Chrome stall it can hit on loaded dev machines is handled by per-phase time
-budgets, a 300s watchdog, and a retry in CI.
-```
+loader-failure scenario: it boots a real `dsh web`, drives the first-run wizard
+in a real browser, and asserts the plugin loads — the "Failed to load plugins /
+list slot requires options.id" banner is the exact symptom it fails on. Used by
+the CI `browser-e2e` matrix; the headless Chrome stall it can hit on loaded dev
+machines is handled by per-phase time budgets, a 300s watchdog, and a retry in CI.
 
-The `settings.plugin.item` slot contract drifted across released DSH versions —
-`0.1.0-rc.6` declares it a **list** slot (registration requires `id`), while
-`0.1.1-rc.x` declares it **keyed** (registration requires `key`). The card
-registers with **both** `key` and `id` (+ list-side `order`), so one
-registration is accepted by every released runtime. `pnpm run test:contract`
+The card's slot contract is the dsh 0.2.x one: the Plugins page declares
+`plugins.item` as a **list** slot (registration requires `id`), and the card
+registers with `id` + `order` + a localized `label`. `pnpm run test:contract`
 parses the shipped `lib/client.cjs` and feeds its registration shape into the
-real `SlotCore` under both declaration kinds; the CI matrix
-(`.github/workflows/ci.yml`) reruns it against the published `dsh-client-ui-slots`
-cores (`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`) and boots a real dsh profile
-per release (`0.1.0-rc.6` / `0.1.1-rc.2`) to verify the served bundle.
+real `SlotCore` under that declaration; the CI matrix
+(`.github/workflows/ci.yml`) reruns it against the published
+`dsh-client-ui-slots` cores (`0.2.0-rc.2` / `0.2.1-rc.2`) and boots a real dsh
+profile per release to verify the served bundle.
 
 The slot-contract section above is pinned by `pnpm run test:contract` and the
 CI matrix. **Releases are fully automated and CI-gated**: bump `package.json`
 version and push to `main` — the `Release` workflow
 (`.github/workflows/release.yml`) waits for that commit's CI run to finish
-green, then tags `v<version>` and publishes a GitHub Release with generated
-changelog and the packed tarball. Cadence is SemVer-driven: **patch** for bug
-fixes (especially issue-anchored ones — someone is waiting), **minor** for
-feature batches, **major** for breaking changes. The `#main` install path
-delivers every merged commit regardless; tags are the immutable "recommended
-version" snapshots.
+green, then tags `v<version>`, publishes a GitHub Release with generated
+changelog and the packed tarball, and **publishes the package to npm** through
+Trusted Publishing (OIDC + provenance — no npm secret lives in the repository).
+Cadence is SemVer-driven: **patch** for bug fixes (especially issue-anchored
+ones — someone is waiting), **minor** for feature batches, **major** for
+breaking changes. The `#main` install path delivers every merged commit
+regardless; tags are the immutable "recommended version" snapshots.
+
+> **npm Trusted Publishing setup (one-time, by a package admin).**
+> npmjs.com → the package → Settings → Trusted Publisher → GitHub Actions:
+> organization/user `1624318455`, repository `dsh-plugin-tavily`, workflow
+> filename `release.yml`, environment empty. After that, publishing needs no
+> secret. The first publish must create the package under the
+> `@memef1f1y` scope, so run `npm publish --access public` once by hand if
+> the scope does not accept the workflow's first request.
 
 `lib/` is committed so the plugin installs without a build step (no `prepare` script, no pnpm build-script allowlisting). The `@deepseek-ai/*` seam and framework packages are **externalized** — the harness provides them at runtime, declared as `peerDependencies`. The browser bundle (`lib/client.cjs`) is a CJS module-loader factory: it `require()`s only the client module table's platform packages and inlines the plugin's own card code, so it needs no extra install-time resolution. `@deepseek-ai/dsh-base` is a devDependency only, so the smoke test can resolve the harness runtime closure.
 

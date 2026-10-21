@@ -1,9 +1,28 @@
 {
-  "name": "@dsh-external/dsh-plugin-tavily",
+  "name": "@memef1f1y/dsh-plugin-tavily",
   "description": "Professional Tavily-backed web search provider for DeepSeek Harness — full request parameters in a WebUI settings card, yaml-first priority, and API connectivity test",
-  "version": "0.6.2",
+  "version": "0.7.0",
+  "license": "MIT",
   "type": "module",
   "main": "lib/index.mjs",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1624318455/dsh-plugin-tavily.git"
+  },
+  "homepage": "https://github.com/1624318455/dsh-plugin-tavily#readme",
+  "bugs": {
+    "url": "https://github.com/1624318455/dsh-plugin-tavily/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "tavily",
+    "web-search",
+    "dsh-plugin"
+  ],
   "files": [
     "lib",
     "cordis.patch.yml",
@@ -26,49 +45,49 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-primitives",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-api-remotes"
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-connection"
       ]
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-api-remotes": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-web": ">=0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-api-remotes": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-connection": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-locale": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-web": ">=0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.4",
     "react": "^18.2.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-api-remotes": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-base": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-connection": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-settings": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-web": ">=0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-api-remotes": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-base": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-web": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.4",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "puppeteer-core": "^25.8.0",
@@ -81,6 +100,5 @@
     "test": "node tests/smoke.mjs",
     "test:contract": "node tests/slot-contract-compat.mjs",
     "typecheck": "tsc --noEmit"
-  },
-  "license": "MIT"
+  }
 }

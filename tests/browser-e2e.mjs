@@ -1,22 +1,21 @@
 /**
  * Browser E2E for the plugin card — reproduces the user-visible failure mode
- * of issue #1 in a REAL browser against the REAL runtime.
+ * of a slot-contract mismatch in a REAL browser against the REAL runtime.
  *
- * The reported crash (`Failed to load plugins … list slot
- * "settings.plugin.item" requires options.id`) happens in the BROWSER when the
- * client module loader applies the plugin against the runtime's slot
- * declaration; neither server boots nor served-bundle checks can see it. This
- * test boots `dsh web`, drives the first-run onboarding (继续 → 稍后配置),
- * opens 设置 → 插件, and asserts:
+ * The crash class this guards (`Failed to load plugins … list slot "…"
+ * requires options.id`) happens in the BROWSER when the client module loader
+ * applies the plugin against the runtime's slot declaration; neither server
+ * boots nor served-bundle checks can see it. This test boots `dsh web`, drives
+ * the first-run onboarding (继续 → 稍后配置), opens 设置 → 插件, and asserts:
  *
  *   1. no loader-failure markers anywhere (page text, console, page errors) —
- *      the exact markers the reporter pasted;
+ *      the exact markers a user pastes when the card's registration does not
+ *      match the runtime's slot contract;
  *   2. the Tavily card is rendered in the plugins configuration list.
  *
- * The genuine rc.6 leg requires the slot-declaring packages pinned to
- * 0.1.0-rc.6 (the published `@deepseek-ai/dsh@0.1.0-rc.6` resolves rc.8
- * settings-plugins which already declare the slot keyed — see ci.yml where
- * the scratch CLI prefix gets a pnpm-workspace.yaml override).
+ * dsh 0.2.x: the card registers into the Plugins page's `plugins.item` list
+ * slot, identified by `id` (the rc.6-era `settings.plugin.item` slot no
+ * longer exists).
  *
  * Env:
  *   PLUGIN_TGZ     path to the packed plugin tarball (required)
@@ -28,7 +27,7 @@
  *
  * Usage:
  *   pnpm build && pnpm pack --pack-destination /tmp
- *   PLUGIN_TGZ=/tmp/dsh-external-dsh-plugin-tavily-*.tgz \
+ *   PLUGIN_TGZ=/tmp/memef1f1y-dsh-plugin-tavily-*.tgz \
  *     DSH_CMD="node /…/dsh/lib/bin.js" node tests/browser-e2e.mjs
  */
 import assert from 'node:assert/strict'
@@ -63,8 +62,10 @@ const FAILURE_MARKERS = [
   /Failed to load plugins/i,
   /failed to apply loader entry/i,
   /requires options\.(id|key)/,
-  /list slot .*settings\.plugin\.item/,
-  /keyed slot .*settings\.plugin\.item/,
+  // dsh 0.2.x moved this card to the Plugins page's `plugins.item` slot; a
+  // registration the runtime rejects names that slot.
+  /list slot .*plugins\.item/,
+  /keyed slot .*plugins\.item/,
 ]
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

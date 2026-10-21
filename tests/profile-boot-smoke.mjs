@@ -20,7 +20,7 @@
  *
  * Usage:
  *   pnpm build && pnpm pack --pack-destination /tmp
- *   PLUGIN_TGZ=/tmp/dsh-external-dsh-plugin-tavily-*.tgz node tests/profile-boot-smoke.mjs
+ *   PLUGIN_TGZ=/tmp/memef1f1y-dsh-plugin-tavily-*.tgz node tests/profile-boot-smoke.mjs
  */
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
@@ -36,7 +36,7 @@ const explicitHome = process.env.SMOKE_DSH_HOME
 const DSH_HOME = explicitHome ?? mkdtempSync(join(tmpdir(), 'dsh-profile-smoke-'))
 const HOME_CREATED = !explicitHome
 const PORT = Number(process.env.PORT ?? 46999)
-const CLIENT_URL = `http://127.0.0.1:${PORT}/plugins/@dsh-external/dsh-plugin-tavily/client.js`
+const CLIENT_URL = `http://127.0.0.1:${PORT}/plugins/@memef1f1y/dsh-plugin-tavily/client.js`
 
 const FAILURE_MARKERS = [
   /Failed to load plugins/i,
@@ -87,12 +87,36 @@ try {
   assert.equal(res.status, 200, `client bundle HTTP ${res.status}`)
   const bundle = await res.text()
   assert.ok(bundle.includes('web-search-tavily'), 'served client bundle must contain the tavily card namespace')
-  for (const [field, constName] of [['key', 'CARD_KEY'], ['id', 'CARD_KEY'], ['order', 'CARD_ORDER']]) {
-    assert.ok(
-      new RegExp(`\\b${field}: ${constName}`).test(bundle),
-      `served client bundle must register with \`${field}\``,
-    )
-  }
+  // dsh 0.2.x moved this card from the `settings.plugin.item` list slot to the
+  // Plugins page's `plugins.item` slot, and the registration now carries
+  // `id` + `order` + `label` instead of the rc.6 `key`/`id` pair. Assert the
+  // contract the current runtime actually accepts.
+  assert.ok(
+    bundle.includes("'plugins.item'") || bundle.includes('"plugins.item"'),
+    'served client bundle must register into the plugins.item slot',
+  )
+  assert.ok(
+    !bundle.includes('settings.plugin.item'),
+    'served client bundle must not reference the removed settings.plugin.item slot',
+  )
+  // The bundler inlines the card's constants, so the registration is asserted
+  // by its shipped VALUES rather than by the identifiers they were written as.
+  assert.ok(
+    /id:\s*"web-search-tavily"/.test(bundle),
+    'served client bundle must register the card under the web-search-tavily id',
+  )
+  assert.ok(
+    /order:\s*41/.test(bundle),
+    'served client bundle must register the card with its display order',
+  )
+  // The card reads its section through `ctx.configForms` and addresses the
+  // credential namespace it is served under; both must be present in the
+  // shipped bundle for the card to work at runtime.
+  assert.ok(bundle.includes('configForms'), 'served client bundle must read its form through configForms')
+  assert.ok(
+    bundle.includes('credentials/reference-updated'),
+    'served client bundle must listen to the current credential invalidation event',
+  )
 
   // The meaningful liveness guarantee is "still serving when the checks above
   // ran" — dsh web shuts down gracefully (exit 0) on SIGTERM, so a post-kill

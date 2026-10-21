@@ -1,5 +1,5 @@
 /**
- * `@dsh-external/dsh-plugin-tavily`: a DeepSeek Harness bundle plugin that registers a
+ * `@memef1f1y/dsh-plugin-tavily`: a DeepSeek Harness bundle plugin that registers a
  * Tavily-backed `WebSearchProvider` into the `ctx.web` seam and exposes its configurable
  * section to the web settings surface (`设置 → 插件 → 网页搜索`, card `web-search-tavily`).
  *
@@ -15,10 +15,9 @@
  * @module dsh-plugin-tavily
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { WebSearchProvider, WebSearchRequest, WebSearchResult } from '@deepseek-ai/dsh-web'
 // Type-only: pulls the ctx.webServer Context merge so the probe route is typed.
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -79,14 +78,12 @@ export const name = 'web-search-tavily'
 export const inject = ['web', 'webServer']
 
 /**
- * Plugin config (all optional — `apply` fills env-var and constant defaults).
+ * Plugin config as the resolver reads it: a plain, fully-unwrapped section with
+ * every field optional.
  *
- * The schema intentionally carries NO `.default()`: the plugin framework
- * validates and normalizes config before `apply`, so a schema default would be
- * baked into the composition `base` seen by the settings card and every field
- * would look "configured from yaml". Code-level defaults live in the provider
- * resolution step, so the card can render placeholders and only mark fields the
- * yaml explicitly set as configuration-covered.
+ * The schema below is declared `.volatile()` on every field (see {@link Config}),
+ * so the object the framework hands `apply` is {@link ParsedConfig}, not this
+ * shape. `readConfig` unwraps one into the other.
  */
 export interface Config {
   /** Literal Tavily API key; prefer {@link apiKeyEnv} so no secret enters configuration files. */
@@ -162,7 +159,6 @@ export interface Config {
   /** @deprecated Use {@link maxResults} instead. */
   numResults?: number
   /**
-  /**
    * Which engine answers `web_search`. `tavily` (default): this provider; if a
    * key is set, Tavily with that key, else keyless. `deepseek`: the official
    * DeepSeek search (useful to switch back without uninstalling). This is the
@@ -171,45 +167,109 @@ export interface Config {
   engine?: 'tavily' | 'deepseek'
 }
 
-export const Config: z<Config> = z.object({
-  apiKey: z.string().role('secret').description('Literal Tavily API key. Prefer storing the key through the credentials service instead.'),
-  apiKeyEnv: z.string().role('credential-ref').description('Credential reference (environment variable name) resolved for each search.'),
-  baseURL: z.string().description('Tavily-compatible endpoint base; `/search` is appended.'),
-  searchDepth: z.union(['basic', 'advanced', 'fast', 'ultra-fast'] as const).description('Search depth: basic (balanced), advanced (deeper), fast, ultra-fast (lowest latency).'),
-  topic: z.union(['general', 'news', 'finance'] as const).description('Search topic: general web, news, or finance.'),
-  days: z.number().step(1).min(1).max(365).description('Recency window in days; used with news/finance topics.'),
-  includeAnswer: z.union([z.boolean(), z.union(['basic', 'advanced'] as const)]).description('Answer request: true/basic quick, advanced detailed.'),
-  includeRawContent: z.union([z.boolean(), z.union(['markdown', 'text'] as const)]).description('Raw page content: boolean, markdown, or text; greatly increases context token usage.'),
-  timeout: z.number().step(100).min(1000).description('Request timeout in milliseconds.'),
-  chunksPerSource: z.number().step(1).min(1).max(3).description('Snippet chunks per source (1–3); larger is richer, more tokens.'),
-  timeRange: z.union(['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] as const).description('Recency preset for news/finance topics.'),
-  startDate: z.string().description('Include only results after this YYYY-MM-DD date.'),
-  endDate: z.string().description('Include only results before this YYYY-MM-DD date.'),
-  includeImages: z.boolean().description('Collect query-related and per-source images.'),
-  includeImageDescriptions: z.boolean().description('With includeImages, add a description per image.'),
-  includeFavicon: z.boolean().description('Include the favicon URL for each result.'),
-  includeDomains: z.array(z.string()).description('Only include these domains in results.'),
-  excludeDomains: z.array(z.string()).description('Exclude these domains from results.'),
-  country: z.string().description('Boost results from one country (general topic).'),
-  maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.'),
-  retryMaxAttempts: z.number().step(1).min(0).max(5).description('Extra attempts after a rate-limited (429) response.'),
-  cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).'),
-  cacheMaxEntries: z.number().step(1).min(1).max(10000).description('Maximum cached search entries (LRU cap; the oldest entry is evicted past it).'),
-  cacheBypassFresh: z.boolean().description('Skip the result cache for recency-sensitive searches (news/finance topic or a time window).'),
-  cacheFile: z.string().description('Optional JSON file the result cache is persisted to (`~/` expands; relative paths resolve against the working directory); unset/empty disables persistence.'),
-  debug: z.boolean().description('Concise per-search debug logging (never the key or raw response bodies).'),
-  apiKeyRefs: z.array(z.string().role('credential-ref')).description('Ordered extra credential references forming the multi-key rotation ring (refs only — keys stay in the credentials store / environment).'),
-  citeFormat: z.union(['plain', 'footnote'] as const).description('How the answer and sources are formatted for the model: plain (Tavily answer alone) or footnote (numbered citation block).'),
-  fallbackEngine: z.union(['none', 'deepseek'] as const).description('On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search instead.'),
-  firecrawlBaseURL: z.string().description('Optional Firecrawl fetch provider endpoint base; `/scrape` is appended.'),
-  firecrawlApiKey: z.string().role('secret').description('Optional Firecrawl literal API key; prefer the firecrawlApiKeyEnv credential reference.'),
-  firecrawlApiKeyEnv: z.string().role('credential-ref').description('Firecrawl credential reference resolved for each fetch (default FIRECRAWL_API_KEY).'),
-  numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.'),
-  engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.'),
+/**
+ * The config object the framework actually hands `apply`: every field wrapped in
+ * a cosmokit Volatile reference, because {@link Config} declares all of them
+ * `.volatile()`. A field whose schema carries a `.default()` is `Volatile<T>`;
+ * one without is `Volatile<T | undefined>`.
+ */
+export type ParsedConfig = {
+  [K in keyof Config]: Volatile<Config[K]>
+}
+
+/**
+ * Plugin config schema.
+ *
+ * Every field carries `.volatile()`: in dsh 0.2.x a settings form exists ONLY for
+ * volatile fields — `volatileForm()` returns `undefined` for a schema with none,
+ * `SettingsForms.describe()` then skips the entry, and no card ever appears. The
+ * marker also makes each parsed value a cosmokit Volatile reference, so `apply`
+ * reads fields through `.get()` (see {@link readConfig}) — that indirection is
+ * what lets a WebUI edit reach the next search without re-registering anything.
+ *
+ * The schema stays default-free on purpose: the framework bakes schema defaults
+ * into the composition `base` the card renders against, which would make every
+ * field look "set from yaml". Code-level defaults live in the resolve step.
+ */
+export const Config = z.object({
+  apiKey: z.string().role('secret').description('Literal Tavily API key. Prefer storing the key through the credentials service instead.').volatile(),
+  apiKeyEnv: z.string().role('credential-ref').description('Credential reference (environment variable name) resolved for each search.').volatile(),
+  baseURL: z.string().description('Tavily-compatible endpoint base; `/search` is appended.').volatile(),
+  searchDepth: z.union(['basic', 'advanced', 'fast', 'ultra-fast'] as const).description('Search depth: basic (balanced), advanced (deeper), fast, ultra-fast (lowest latency).').volatile(),
+  topic: z.union(['general', 'news', 'finance'] as const).description('Search topic: general web, news, or finance.').volatile(),
+  days: z.number().step(1).min(1).max(365).description('Recency window in days; used with news/finance topics.').volatile(),
+  includeAnswer: z.union([z.boolean(), z.union(['basic', 'advanced'] as const)]).description('Answer request: true/basic quick, advanced detailed.').volatile(),
+  includeRawContent: z.union([z.boolean(), z.union(['markdown', 'text'] as const)]).description('Raw page content: boolean, markdown, or text; greatly increases context token usage.').volatile(),
+  timeout: z.number().step(100).min(1000).description('Request timeout in milliseconds.').volatile(),
+  chunksPerSource: z.number().step(1).min(1).max(3).description('Snippet chunks per source (1–3); larger is richer, more tokens.').volatile(),
+  timeRange: z.union(['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] as const).description('Recency preset for news/finance topics.').volatile(),
+  startDate: z.string().description('Include only results after this YYYY-MM-DD date.').volatile(),
+  endDate: z.string().description('Include only results before this YYYY-MM-DD date.').volatile(),
+  includeImages: z.boolean().description('Collect query-related and per-source images.').volatile(),
+  includeImageDescriptions: z.boolean().description('With includeImages, add a description per image.').volatile(),
+  includeFavicon: z.boolean().description('Include the favicon URL for each result.').volatile(),
+  includeDomains: z.array(z.string()).description('Only include these domains in results.').volatile(),
+  excludeDomains: z.array(z.string()).description('Exclude these domains from results.').volatile(),
+  country: z.string().description('Boost results from one country (general topic).').volatile(),
+  maxResults: z.number().step(1).min(1).max(20).description('Default number of web results per search.').volatile(),
+  retryMaxAttempts: z.number().step(1).min(0).max(5).description('Extra attempts after a rate-limited (429) response.').volatile(),
+  cacheTtlSeconds: z.number().step(1).min(0).max(3600).description('Query-cache TTL in seconds (0 disables the cache).').volatile(),
+  cacheMaxEntries: z.number().step(1).min(1).max(10000).description('Maximum cached search entries (LRU cap; the oldest entry is evicted past it).').volatile(),
+  cacheBypassFresh: z.boolean().description('Skip the result cache for recency-sensitive searches (news/finance topic or a time window).').volatile(),
+  cacheFile: z.string().description('Optional JSON file the result cache is persisted to (`~/` expands; relative paths resolve against the working directory); unset/empty disables persistence.').volatile(),
+  debug: z.boolean().description('Concise per-search debug logging (never the key or raw response bodies).').volatile(),
+  apiKeyRefs: z.array(z.string().role('credential-ref')).description('Ordered extra credential references forming the multi-key rotation ring (refs only — keys stay in the credentials store / environment).').volatile(),
+  citeFormat: z.union(['plain', 'footnote'] as const).description('How the answer and sources are formatted for the model: plain (Tavily answer alone) or footnote (numbered citation block).').volatile(),
+  fallbackEngine: z.union(['none', 'deepseek'] as const).description('On a Tavily-side failure (timeout / network / 5xx), answer via the official DeepSeek search instead.').volatile(),
+  firecrawlBaseURL: z.string().description('Optional Firecrawl fetch provider endpoint base; `/scrape` is appended.').volatile(),
+  firecrawlApiKey: z.string().role('secret').description('Optional Firecrawl literal API key; prefer the firecrawlApiKeyEnv credential reference.').volatile(),
+  firecrawlApiKeyEnv: z.string().role('credential-ref').description('Firecrawl credential reference resolved for each fetch (default FIRECRAWL_API_KEY).').volatile(),
+  numResults: z.number().step(1).min(1).max(20).description('Legacy alias for maxResults; prefer maxResults.').volatile(),
+  engine: z.union(['tavily', 'deepseek'] as const).description('Answer web_search with Tavily (keyless if no key) or the official DeepSeek provider.').volatile(),
 })
 
-/** Settings namespace carrying this provider's endpoint, depth, topic, and key reference. */
-export const WEB_SEARCH_TAVILY_SETTINGS_NAMESPACE = settingsNamespace('web-search-tavily')
+/**
+ * Settings namespace this plugin's card addresses. In dsh 0.2.x a plugin's
+ * settings namespace IS its profile entry id, so this must match the `id` in
+ * cordis.patch.yml — the card resolves the form through
+ * `ctx.configForms.get(WEB_SEARCH_TAVILY_SETTINGS_NAMESPACE)`.
+ */
+export const WEB_SEARCH_TAVILY_SETTINGS_NAMESPACE = 'web-search-tavily'
+
+/**
+ * Read one config field, whether the framework handed back a Volatile reference
+ * (dsh 0.2.x, every field declared `.volatile()`) or a plain value (unit tests
+ * and any caller building a bare config object).
+ * @param holder - the parsed config object.
+ * @param field - the field to read.
+ * @returns the current value, or `undefined` when unset.
+ */
+function readField<K extends keyof Config>(holder: ParsedConfig, field: K): Config[K] {
+  const value = holder[field] as unknown
+  if (value !== null && typeof value === 'object' && typeof (value as { get?: unknown }).get === 'function') {
+    return (value as { get: () => Config[K] }).get()
+  }
+  return value as Config[K]
+}
+
+/**
+ * Snapshot every defined field of a parsed config into a plain object, so the
+ * resolve step works on plain values regardless of volatile wrapping.
+ *
+ * Called per operation, not once at `apply`: the volatile references are live,
+ * so a WebUI save is picked up by the very next search without re-registering
+ * any provider.
+ * @param holder - the parsed config object.
+ * @returns a plain partial config holding only the fields that are set.
+ */
+function readConfig(holder: ParsedConfig): Config {
+  const result: Record<string, unknown> = {}
+  for (const key of Object.keys(holder) as (keyof Config)[]) {
+    const value = readField(holder, key)
+    if (value !== undefined) result[key] = value
+  }
+  return result as Config
+}
 
 /**
  * Project a resolved section into the options the provider serves its next
@@ -361,17 +421,16 @@ function resolveFirecrawlOptions(ctx: Context, config: Config, entry: Config): F
 }
 
 /** Register the Tavily search provider with `ctx.web`. */
-export function apply(ctx: Context, config: Config): void {
-  const entry = config
-  let current: () => Config = () => config
-  installSettingsSection(ctx, WEB_SEARCH_TAVILY_SETTINGS_NAMESPACE, Config, config, {
-    setSource: (source) => {
-      current = source
-    },
-    // The registration carries no resolved value: the provider projects the
-    // section per search, so a committed change needs no re-registration.
-    onChange: () => {},
-  })
+export function apply(ctx: Context, config: ParsedConfig): void {
+  // The composition entry as yaml declared it: read once, through the volatile
+  // wrappers, so the resolve step can let yaml win over a WebUI value for the
+  // fields the file actually set.
+  const entry = readConfig(config)
+  // Every provider below reads the section through this thunk, per operation.
+  // In dsh 0.2.x a settings edit mutates the live volatile references in place,
+  // so nothing needs re-registering when the user saves: the next search simply
+  // sees the new value.
+  const current = (): Config => readConfig(config)
   const provider = new TavilySearchProvider(
     () => resolveOptions(ctx, current(), entry),
     // When the card's engine switch is `deepseek`, answer through the official

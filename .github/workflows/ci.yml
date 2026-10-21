@@ -8,7 +8,7 @@ on:
 
 jobs:
   # Fast feedback: typecheck, build, and the in-repo contract test against the
-  # dev-time SlotCore (rc.6). Builds first so the artifact checks can run.
+  # dev-time SlotCore (0.2.0-rc.2). Builds first so the artifact checks can run.
   check:
     name: typecheck + build + contract test
     runs-on: ubuntu-latest
@@ -29,11 +29,11 @@ jobs:
       - name: Contract test (dev SlotCore)
         run: pnpm run test:contract
 
-  # The slot-contract drift that caused issue #1 lives in the published
+  # The slot contract lives in the published
   # `@deepseek-ai/dsh-client-ui-slots` core per release: the same shipped
-  # client bundle must register under the rc.6 LIST runtime and the 0.1.1-rc.2
-  # KEYED runtime. Runs the artifact-level contract test against each real
-  # core version.
+  # client bundle must register under the 0.2.x LIST runtime the Plugins page
+  # declares (`plugins.item`, identity by `id`). Runs the artifact-level
+  # contract test against each real core version.
   slot-contract-matrix:
     name: slot contract vs real SlotCore (${{ matrix.slots }})
     needs: check
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slots: ['0.1.0-rc.6', '0.1.0-rc.8', '0.1.1-rc.2']
+        slots: ['0.2.0-rc.2', '0.2.1-rc.2']
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -60,8 +60,8 @@ jobs:
 
   # Install→serve wiring against real dsh releases (the CLI ships its own
   # platform, so each leg boots a self-consistent runtime). Boots headless,
-  # fetches the served client bundle, and asserts the dual-field card
-  # registration is what actually ships.
+  # fetches the served client bundle, and asserts the card registration is
+  # what actually ships.
   profile-boot:
     name: real profile boot smoke (dsh ${{ matrix.dsh }})
     needs: check
@@ -70,7 +70,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: ['0.1.0-rc.6', '0.1.1-rc.2']
+        dsh: ['0.2.0-rc.2', '0.2.1-rc.2']
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -93,32 +93,23 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dshcli"
           pnpm --dir "$RUNNER_TEMP/dshcli" init > /dev/null 2>&1
-          # The published @deepseek-ai/dsh@0.1.0-rc.6 today resolves rc.8
-          # settings-plugins, which already declare settings.plugin.item KEYED —
-          # pin the genuine rc.6 (LIST) contract so this leg really exercises
-          # the issue #1 scenario instead of silently testing a newer runtime.
-          if [ "${{ matrix.dsh }}" = "0.1.0-rc.6" ]; then
-            printf "overrides:\n  '@deepseek-ai/dsh-client-ui-settings-plugins': 0.1.0-rc.6\n  '@deepseek-ai/dsh-client-ui-slots': 0.1.0-rc.6\n" > "$RUNNER_TEMP/dshcli/pnpm-workspace.yaml"
-          fi
           pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
-      # Scoped-name pack output: dsh-external-dsh-plugin-tavily-<version>.tgz.
+      # Scoped-name pack output: memef1f1y-dsh-plugin-tavily-<version>.tgz.
       # Resolve it at runtime so version bumps never desync the filename
       # (0.6.1 was hardcoded here once and broke the smoke with ENOENT).
       - name: Boot smoke on dsh ${{ matrix.dsh }}
         env:
           DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: |
-          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
+          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/memef1f1y-dsh-plugin-tavily-*.tgz | head -1)
           node tests/profile-boot-smoke.mjs
 
-  # The TRUE user scenario from issue #1: a real browser applies the plugin's
-  # client half against the runtime's slot declaration. Drives first-run
-  # onboarding and asserts the LOAD OUTCOME — no "Failed to load plugins"
-  # banner in page text, console or page errors — the exact symptom the
-  # reporter pasted. Verified locally with both polarities against a genuine
-  # rc.6 stack (key-only variant reproduces the banner verbatim; the fixed
-  # plugin loads clean). The settings card render sits one click deeper and
-  # proved too timing-sensitive to gate on, so it is not part of the check.
+  # The TRUE user scenario: a real browser applies the plugin's client half
+  # against the runtime's slot declaration. Drives first-run onboarding and
+  # asserts the LOAD OUTCOME — no "Failed to load plugins" banner in page
+  # text, console or page errors. The settings card render sits one click
+  # deeper and proved too timing-sensitive to gate on, so it is not part of
+  # the check.
   browser-e2e:
     name: real browser E2E (dsh ${{ matrix.dsh }})
     needs: check
@@ -127,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: ['0.1.0-rc.6', '0.1.1-rc.2']
+        dsh: ['0.2.0-rc.2', '0.2.1-rc.2']
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -145,15 +136,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/dshcli"
           pnpm --dir "$RUNNER_TEMP/dshcli" init > /dev/null 2>&1
-          if [ "${{ matrix.dsh }}" = "0.1.0-rc.6" ]; then
-            printf "overrides:\n  '@deepseek-ai/dsh-client-ui-settings-plugins': 0.1.0-rc.6\n  '@deepseek-ai/dsh-client-ui-slots': 0.1.0-rc.6\n" > "$RUNNER_TEMP/dshcli/pnpm-workspace.yaml"
-          fi
           pnpm --dir "$RUNNER_TEMP/dshcli" add "@deepseek-ai/dsh@${{ matrix.dsh }}"
       - name: Browser E2E on dsh ${{ matrix.dsh }}
         env:
           DSH_CMD: node ${{ runner.temp }}/dshcli/node_modules/@deepseek-ai/dsh/lib/bin.js
         run: |
-          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/dsh-external-dsh-plugin-tavily-*.tgz | head -1)
+          export PLUGIN_TGZ=$(ls "$RUNNER_TEMP"/memef1f1y-dsh-plugin-tavily-*.tgz | head -1)
           # The load-outcome gate (no "Failed to load plugins" banner) is the
           # deterministic symptom check for issue #1. Headless Chrome can stall
           # for unrelated environmental reasons, so: OS-level `timeout` per

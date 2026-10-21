@@ -15,7 +15,7 @@
  */
 
 import { useState, type ReactNode } from 'react'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardShell } from './card-form.ts'
 import type { TavilyCardLocaleKey } from './locales.ts'
 
@@ -62,7 +62,7 @@ export function PluginCard(props: PluginCardProps) {
           <span className="dsh-tavily-description">{props.t(props.descriptionKey)}</span>
         </span>
         {state.dirty ? <span className="dsh-tavily-pending">{props.t('unsaved')}</span> : null}
-        <IconChevronDownOutline14 className={open ? 'dsh-tavily-chevron dsh-tavily-open' : 'dsh-tavily-chevron'} />
+        <IconChevronDownOutlineMedium className={open ? 'dsh-tavily-chevron dsh-tavily-open' : 'dsh-tavily-chevron'} />
       </button>
       {open
         ? (

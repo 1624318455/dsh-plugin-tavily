@@ -13,4 +13,4 @@
 
 - insert:
     - id: web-search-tavily
-      name: '@dsh-external/dsh-plugin-tavily'
+      name: '@memef1f1y/dsh-plugin-tavily'

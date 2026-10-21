@@ -9,7 +9,7 @@ import { defineConfig } from 'tsdown'
  *    bundling duplicates.
  *
  * 2. Browser CJS `lib/client.js` — the Client half, fetched by the harness's
- *    client module loader at `/plugins/@dsh-external/dsh-plugin-tavily/client.js`.
+ *    client module loader at `/plugins/@memef1f1y/dsh-plugin-tavily/client.js`.
  *    The banner wraps the bundle in `window.__ModuleLoader__.load({ id,
  *    factory })`; the loader's `require` answers the externals (the platform
  *    module table + the runtime store exemption), and everything else —
@@ -19,7 +19,7 @@ import { defineConfig } from 'tsdown'
 // The module table the browser shell seeds (platform modules) plus the
 // runtime store exemption. `id` in the load banner must equal the entry name
 // (package name); the loader resolves `./client` from the package exports.
-const PACKAGE_ID = '@dsh-external/dsh-plugin-tavily'
+const PACKAGE_ID = '@memef1f1y/dsh-plugin-tavily'
 
 const CLIENT_EXTERNALS = [
   'react',

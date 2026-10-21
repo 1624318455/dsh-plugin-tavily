@@ -29,14 +29,22 @@
 
 ## 安装
 
+需要 **dsh 0.2.0-rc.2 或更新版本**（见下方「环境要求」）。从 npm 安装：
+
 ```sh
-dsh plugin --profile web add "github:1624318455/dsh-plugin-tavily#main"
+dsh plugin --profile web add "@memef1f1y/dsh-plugin-tavily"
 ```
 
 开发期间可用本地路径安装：
 
 ```sh
 dsh plugin --profile web add "file:/绝对路径/dsh-plugin-tavily"
+```
+
+或从仓库主分支安装（每次提交的最新状态）：
+
+```sh
+dsh plugin --profile web add "github:1624318455/dsh-plugin-tavily#main"
 ```
 
 插件的 `cordis.patch.yml` 会把 `web.config.searchProvider` 设为 `tavily`，即**自动选 Tavily 为提供方**（无需手动改配置）。
@@ -90,7 +98,7 @@ export DSH_WEB_FETCH_PROVIDER=firecrawl
 `web_search` 工具的输出 schema 与提供方无关 —— 模型看不到提供方名称，且 API key 刻意存放在环境变量之外，所以"查环境变量"是错误探测方式。要确认当前后端：
 
 - **提供方选择** —— `~/.dsh/profiles/web/cordis.patch.yml` 中有 `web` 行且 `searchProvider: tavily`。
-- **插件已加载** —— `~/.dsh/settings.yaml` 含 `web-search-tavily` 配置节（只有插件的 `installSettingsSection` 会写入它）。
+- **插件已加载** —— 组合后的 profile 树里存在 `web-search-tavily` 条目（`dsh --profile web --dump-config`）。
 - **凭据在位** —— `TAVILY_API_KEY` 存在于凭据存储（`~/.dsh/.credentials.yaml`），不在环境变量中。
 - **结果特征** —— Tavily 结果在 `content` 中携带生成式 answer 摘要；内置 DeepSeek provider 不产生该字段。
 
@@ -147,7 +155,7 @@ export DSH_WEB_FETCH_PROVIDER=firecrawl
 
 ```yaml
 - id: web-search-tavily
-  name: '@dsh-external/dsh-plugin-tavily'
+  name: '@memef1f1y/dsh-plugin-tavily'
   config:
     searchDepth: advanced
     topic: news
@@ -211,28 +219,18 @@ cordis.patch.yml 配置  >  WebUI 面板保存值  >  代码内置默认值
 | `country` | （未设） | 偏向某一国家（general 主题） | ✓ |
 | `numResults` | `5` | **已废弃**：`maxResults` 的旧别名 | 否（请用 `maxResults`） |
 
-`apiKeyEnv` 保持「仅配置」：它属于高级接线细节。GUI 保存的值落在 `~/.dsh/settings.yaml` 的 `web-search-tavily` 段。设置改动即时生效 —— 提供方每次操作都会重读配置段，无需重启或重新注册。
+`apiKeyEnv` 保持「仅配置」：它属于高级接线细节。GUI 保存的值落在 profile 的 `web-search-tavily` 条目（`~/.dsh/profiles/web/cordis.patch.yml`）。设置改动即时生效 —— 提供方每次操作都会重读配置段，无需重启或重新注册。
+
+## 环境要求
+
+- **dsh 0.2.0-rc.2 或更新版本。** 本插件面向 0.2.x 插件 API：设置表单通过把插件 `Config` schema 的字段标记为 `.volatile()` 来声明，卡片通过 `ctx.configForms` 读取配置段，并注册到插件页的 `plugins.item` 插槽。更早的 0.1.x 运行时使用另一套设置契约，不再受支持。
+- **Tavily API Key** —— 粘贴到卡片，或存入凭据库的 `TAVILY_API_KEY`。
 
 ## 平台说明（Web GUI 卡片可见性）
 
-Web GUI 只有在 apiproxy 白名单（`@deepseek-ai/dsh-host-apiproxy` 的 `WEB_SETTINGS_NAMESPACES`）内的设置段才会下发给浏览器。截至 `0.1.0-rc.6`，该列表为硬编码，且"让插件自行暴露其配置"的机制尚未落地，因此第三方插件的卡片即使宿主侧已注册也会被过滤。要让 **网页搜索（Tavily）** 卡片渲染出来，请在已安装副本的白名单数组中加入该命名空间并重启 dsh：
+**dsh 0.2.x 不需要任何补丁。** 早期版本（0.1.x）只有在命名空间位于 apiproxy 白名单时才会把插件的设置段下发给浏览器，第三方卡片必须手工放行。该机制已被移除：0.2.x 的设置域会为任何声明了 volatile 配置 schema 的插件条目提供服务，卡片自行注册到插件页。
 
-```js
-// ~/.dsh/profiles/node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js
-// 在 WEB_SETTINGS_NAMESPACES 数组中加入：
-"web-search-deepseek",
-"web-search-tavily",   // ← 添加这一行
-```
-
-提供方及全部功能无需此补丁即可工作，只是 GUI 卡片被隐藏。`pnpm install --force` 与 harness 升级都会覆盖此补丁，重装依赖后需重新应用。
-
-**用内置脚本应用补丁**（幂等；`--check` 只检测不写入）：
-
-```sh
-node scripts/patch-apiproxy.mjs --check            # 仅报告是否需要补丁
-node scripts/patch-apiproxy.mjs                    # 修补所有已安装 profile
-node scripts/patch-apiproxy.mjs --profile web      # 只修补指定 profile
-```
+插件安装并重启 dsh 后，卡片会出现在 **设置 → 插件** 下的 **网页搜索（Tavily）**。宿主半未加载时卡片不显示 —— 卡片注册本身跟随宿主对 `web-search-tavily` 命名空间的服务状态。
 
 > **已保存密钥的服务端测试**：本插件注册了宿主侧探针 `POST /api/tavily-probe`，可在服务端用已存 Key 测试 Tavily 连通性（无 Key 走 keyless）；`TavilySearchProvider.connectivityTest()` / `probe()` / `usage()` / `status()` 也提供了编程用的服务端路径，`GET /api/tavily-status` 为卡片状态指示器供数。浏览器侧因安全设计读不回已存密钥，故「测试API连接」按钮仍要求已配置密钥时重输一次。
 
@@ -247,7 +245,7 @@ Tavily 的扁平 `results[]` 映射为规范化的 `WebSearchSource`：`url` ←
 - ✅ **用量/成本面板** —— 卡片展示 `GET /usage` + 实时积分/token 预估（已实现）。
 - ✅ **429 重试 + 短时缓存** —— `retry-after` 感知退避 + 可选 TTL 缓存（已实现）。
 - ✅ **Extract 提取能力** —— 已在现有 fetch seam 上注册基于 Tavily Extract 的 `WebFetchProvider`（已实现）。
-- ✅ **apiproxy 白名单摩擦** —— 提供幂等的 `scripts/patch-apiproxy.mjs`（已实现）。
+- ✅ **apiproxy 白名单摩擦** —— 0.2.x 已移除该限制，插件的设置表单由自身 schema 声明（无需补丁）。
 - ✅ **状态指示器** —— `GET /api/tavily-status`（已存密钥，不消耗搜索额度）+ 卡片徽标与刷新（已实现）。
 - ✅ **错误分类** —— 连通/用量失败分类为 Key 无效 / 余额不足 / 限流 / 服务宕机 / 超时 / 网络，并附分场景 UI 文案（已实现）。
 - ✅ **缓存加固** —— LRU 上限（`cacheMaxEntries`）+ 时效性查询绕行（`cacheBypassFresh`）（已实现）。
@@ -274,12 +272,13 @@ node tests/profile-boot-smoke.mjs   # 安装→服务连通冒烟：需要 PLUGI
 node tests/browser-e2e.mjs          # 真实浏览器加载结果门禁：需要 PLUGIN_TGZ + Chromium
 ```
 
-**浏览器 E2E**（`tests/browser-e2e.mjs`）是复现 issue #1 场景的那一层：它能启动真实 `dsh web`、在真实浏览器里走完首启向导，并断言插件加载正常——"Failed to load plugins / list slot requires options.id" 横幅正是它要拦截的确切症状（已在真 rc.6 上双向验证：坏掉的 key-only 注册原样复现、修复后的双字段注册干净通过）。CI 的 `browser-e2e` 矩阵使用它；重载开发机上可能偶发的无头 Chrome 冻结，由阶段级时间预算、300s 看门狗与 CI 内的一次重试兜底。
-```
+**浏览器 E2E**（`tests/browser-e2e.mjs`）是复现加载失败场景的那一层：它能启动真实 `dsh web`、在真实浏览器里走完首启向导，并断言插件加载正常——"Failed to load plugins / list slot requires options.id" 横幅正是它要拦截的确切症状。CI 的 `browser-e2e` 矩阵使用它；重载开发机上可能偶发的无头 Chrome 冻结，由阶段级时间预算、300s 看门狗与 CI 内的一次重试兜底。
 
-`settings.plugin.item` 插槽契约在不同 DSH 发布版之间发生过漂移——`0.1.0-rc.6` 声明为 **list** 插槽（注册要求 `id`），而 `0.1.1-rc.x` 声明为 **keyed**（注册要求 `key`）。卡片注册**同时携带** `key` 与 `id`（外加 list 侧 `order`），因此同一份注册可被所有已发布运行时接受。`pnpm run test:contract` 会解析产物 `lib/client.cjs`，把其中的注册形状喂给真实 `SlotCore` 在两种声明形态下验证；CI 矩阵（`.github/workflows/ci.yml`）还会针对已发布的 `dsh-client-ui-slots` 核心（`0.1.0-rc.6` / `0.1.0-rc.8` / `0.1.1-rc.2`）重跑，并按发布版（`0.1.0-rc.6` / `0.1.1-rc.2`）各启动一次真实 dsh profile 验证实际服务的 bundle。
+卡片的插槽契约是 dsh 0.2.x 的那一套：插件页把 `plugins.item` 声明为 **list** 插槽（注册要求 `id`），卡片注册携带 `id` + `order` + 本地化 `label`。`pnpm run test:contract` 会解析产物 `lib/client.cjs`，把其中的注册形状喂给真实 `SlotCore` 在该声明形态下验证；CI 矩阵（`.github/workflows/ci.yml`）还会针对已发布的 `dsh-client-ui-slots` 核心（`0.2.0-rc.2` / `0.2.1-rc.2`）重跑，并按发布版各启动一次真实 dsh profile 验证实际服务的 bundle。
 
-**发布完全自动化且经 CI 门禁**：改 `package.json` 版本号并推送到 `main`，`Release` 工作流（`.github/workflows/release.yml`）会先等待该提交的 CI 全绿，随后自动打 `v<版本>` tag 并发布 GitHub Release（自动生成变更记录 + 打包好的 tarball 附件）。节奏由 SemVer 决定：**patch** 修 bug（尤其是被 issue 锚定的修复——有人在等，如本次 settings.plugin.item 修复的 v0.6.1）、**minor** 一批功能落地、**major** 破坏性变更。`#main` 安装路径本来就会拿到每个合入的提交；tag 是"推荐版本"的不可变快照。
+**发布完全自动化且经 CI 门禁**：改 `package.json` 版本号并推送到 `main`，`Release` 工作流（`.github/workflows/release.yml`）会先等待该提交的 CI 全绿，随后自动打 `v<版本>` tag、发布 GitHub Release（自动生成变更记录 + 打包好的 tarball 附件），并通过 **Trusted Publishing（OIDC + provenance，仓库内不存任何 npm secret）把包发布到 npm**。节奏由 SemVer 决定：**patch** 修 bug（尤其是被 issue 锚定的修复——有人在等）、**minor** 一批功能落地、**major** 破坏性变更。`#main` 安装路径本来就会拿到每个合入的提交；tag 是"推荐版本"的不可变快照。
+
+> **npm Trusted Publishing 一次性配置（需包管理员操作）**：npmjs.com → 对应包 → Settings → Trusted Publisher → GitHub Actions：organization/user 填 `1624318455`，repository 填 `dsh-plugin-tavily`，workflow 文件名填 `release.yml`，environment 留空。配好之后发布无需任何 secret。若该 scope 尚不能接受工作流的首次请求，需先手工执行一次 `npm publish --access public` 建包。
 
 `lib/` 提交入库，插件安装时无需构建步骤（无 `prepare` 脚本，不需要 pnpm 构建脚本白名单）。`@deepseek-ai/*` 的 seam 与框架包**外部化** —— 由 harness 在运行时提供，声明为 `peerDependencies`。浏览器 bundle（`lib/client.cjs`）是 CJS 模块加载器工厂：只 `require()` 客户端模块表中的平台包，插件自身卡片代码内联其中，安装时无需额外解析。`@deepseek-ai/dsh-base` 只是 devDependency，供冒烟测试解析 harness 运行时闭包。
 

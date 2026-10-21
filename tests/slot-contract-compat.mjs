@@ -1,21 +1,23 @@
 /**
- * Contract regression test for the `settings.plugin.item` card registration.
+ * Contract regression test for the `plugins.item` card registration.
  *
- * Pins the version-skew bridge in src/client/index.ts: the slot shipped LIST
- * in `dsh-client-ui-settings-plugins@0.1.0-rc.6` (registration REQUIRES
- * `options.id`, built-ins register by id) and became KEYED in `0.1.1-rc.x`
- * (registration REQUIRES `options.key`, built-ins register by key). The card
- * registers with BOTH fields so a single registration satisfies every
- * released runtime.
+ * Pins the dsh 0.2.x contract this plugin's card is written against:
+ *
+ *   - the Plugins page's official-plugin list is the `plugins.item` slot
+ *     (the rc.6-era `settings.plugin.item` slot no longer exists);
+ *   - a list-slot registration carries `id` (the cell identity) + `order`
+ *     (the display position) + `label` (registrant-localized title);
+ *   - the card reaches its form through `ctx.configForms`, not the removed
+ *     `ctx.settingsScope`;
+ *   - credential invalidations arrive as `credentials/reference-updated`.
  *
  * The test has two halves:
- *  1. It parses the SHIPPED bundle (lib/client.cjs) and asserts the actual
- *     card registration exposes `key` + `id` (+ `order`) — the regression
- *     that catches a future naive revert to a single-field registration.
- *  2. It feeds that shape into the REAL `SlotCore` under both the list and
- *     the keyed declaration, proving the registration is accepted by both
- *     runtime contracts — and pins the one-field failure modes on each side
- *     (the exact loader errors from issue #1 and its mirror).
+ *  1. It parses the SHIPPED bundle (lib/client.cjs) and asserts the card
+ *     registration actually carries the fields the current runtime requires —
+ *     the artifact-level guard that catches a naive revert to the rc.6 shape.
+ *  2. It feeds that shape into the REAL `SlotCore` under the list
+ *     declaration, proving the registration is accepted, and pins the
+ *     one-field failure mode the runtime rejects.
  *
  * The SlotCore under test is the repo's installed copy by default; point
  * `SLOTS_PACKAGE_DIR` at another install (e.g. a matrix leg with a different
@@ -35,7 +37,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 
 // Resolve SlotCore from SLOTS_PACKAGE_DIR when given, else from this repo's
-// own node_modules (the rc.6 core the plugin is developed against).
+// own node_modules (the core the plugin is developed against).
 const slotRoot = process.env.SLOTS_PACKAGE_DIR
   ? join(process.env.SLOTS_PACKAGE_DIR, '__probe__.mjs')
   : join(here, '__probe__.mjs')
@@ -54,9 +56,7 @@ function coreWith(kind) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The shipped bundle must carry the dual-field registration. This is the
-//    artifact-level guard: it would have caught the key-only revert at the
-//    source, before any runtime is involved.
+// 1. The shipped bundle must carry the current-runtime registration shape.
 // ---------------------------------------------------------------------------
 const bundlePath = join(here, '..', 'lib', 'client.cjs')
 let bundle
@@ -66,25 +66,56 @@ try {
   throw new Error(`lib/client.cjs not found at ${bundlePath} — run \`pnpm build\` before this test`)
 }
 
-function shipped(field) {
-  const match = new RegExp(`const ${field} = "([^"]+)"`).exec(bundle)
-  assert.ok(match, `shipped bundle must define const ${field}`)
-  return match[1]
-}
+// The card registers into the Plugins page's official-plugin list.
+assert.ok(
+  bundle.includes('plugins.item'),
+  'shipped bundle must register into the plugins.item slot',
+)
+assert.doesNotMatch(
+  bundle,
+  /settings\.plugin\.item/,
+  'shipped bundle must not reference the removed settings.plugin.item slot',
+)
 
-const shippedKey = shipped('CARD_KEY')
-assert.equal(shippedKey, 'web-search-tavily', 'shipped card key must be the tavily namespace')
+// The form is read through the settings domain's `configForms` service.
+assert.ok(
+  bundle.includes('configForms'),
+  'shipped bundle must read its form through configForms',
+)
+assert.doesNotMatch(
+  bundle,
+  /settingsScope/,
+  'shipped bundle must not reference the removed settingsScope service',
+)
 
-for (const field of ['key', 'id', 'order']) {
-  assert.match(
-    bundle,
-    new RegExp(`\\b${field}: CARD_${field === 'order' ? 'ORDER' : 'KEY'}`),
-    `shipped cardOptions must carry the \`${field}\` field`,
-  )
-}
+// Credential invalidations use the current forwarded event name.
+assert.ok(
+  bundle.includes('credentials/reference-updated'),
+  'shipped bundle must listen to credentials/reference-updated',
+)
+
+// The card's own identity and display order. They survive as named constants
+// in the bundle (the bundler keeps module-scope bindings), so the contract is
+// asserted on the constants AND on the registration that consumes them.
+const idMatch = /const CARD_ID = "([^"]+)"/.exec(bundle)
+assert.ok(idMatch, 'shipped bundle must define const CARD_ID')
+assert.equal(idMatch[1], 'web-search-tavily', 'shipped card id must be the tavily namespace')
 const orderMatch = /const CARD_ORDER = (\d+)/.exec(bundle)
 assert.ok(orderMatch, 'shipped bundle must define const CARD_ORDER')
 const shippedOrder = Number(orderMatch[1])
+
+// The list-slot registration requires `id`; `order` positions the cell; `label`
+// is the registrant-localized title the Plugins page renders.
+for (const [field, binding] of [['id', 'CARD_ID'], ['order', 'CARD_ORDER']]) {
+  assert.ok(
+    new RegExp(`\\b${field}: ${binding}\\b`).test(bundle),
+    `shipped card registration must carry \`${field}\` from ${binding}`,
+  )
+}
+assert.ok(
+  /label: \(\) => t\(/.test(bundle),
+  'shipped card registration must carry a localized label',
+)
 
 // Fiber-inject guard (dsh-plugin-tts@a00b357 class): the client runner creates
 // the entry as ctx.plugin({ inject, apply }) with inject waiting, so apply
@@ -97,10 +128,10 @@ assert.match(
   /const inject = \[[^\]]*"slots"[^\]]*\]/,
   'shipped bundle must declare fiber inject including "slots"',
 )
-for (const service of ['slots', 'locale', 'connection', 'remote', 'settingsScope']) {
+for (const service of ['slots', 'locale', 'remote', 'configForms']) {
   assert.ok(
-    bundle.includes(`"${service}"`) && bundle.includes(`${service} service unavailable`),
-    `shipped bundle must resolve "${service}" with a fail-loud guard`,
+    bundle.includes(`"${service}"`),
+    `shipped bundle must declare "${service}" as a required service`,
   )
 }
 assert.doesNotMatch(
@@ -109,62 +140,36 @@ assert.doesNotMatch(
   'shipped bundle must never silently early-return when slots is missing',
 )
 
-// The exact dual-field shape the bundle registers with (locale/inject are
-// irrelevant to the slot-core contract, so only the cell fields are probed).
-const CARD = { key: shippedKey, id: shippedKey, order: shippedOrder }
+// The exact shape the bundle registers with (locale/inject are irrelevant to
+// the slot-core contract, so only the cell fields are probed).
+const CARD = { id: 'web-search-tavily', order: shippedOrder }
 
 // ---------------------------------------------------------------------------
-// 2. The dual-field registration against the real SlotCore, per declaration
-//    kind. Each side also pins its one-field failure mode.
+// 2. The registration against the real SlotCore, under the list declaration
+//    `plugins.item` uses. The one-field failure mode is pinned too.
 // ---------------------------------------------------------------------------
-
-// --- rc.6 contract: list slot, registration requires options.id ---
 {
   const core = coreWith('list')
 
-  // The bug from issue #1, pinned verbatim: a key-only registration on a list
-  // slot throws the exact loader error (`list slot "…" requires options.id`).
+  // A registration without `id` throws the loader error — why the id must
+  // survive any future refactor of the card's options object.
   assert.throws(
-    () => core.register({ name: 'test.slot', key: CARD.key }, () => {}),
+    () => core.register({ name: 'test.slot', order: CARD.order }, () => {}),
     /list slot "test\.slot" requires options\.id/,
-    'key-only registration must throw on the list (rc.6) runtime',
+    'a registration without options.id must throw on the list runtime',
   )
 
-  // The bridge: the shipped key + id + order registers without error.
+  // The shipped shape registers without error.
   assert.doesNotThrow(
     () => core.register({ name: 'test.slot', ...CARD }, () => {}),
-    'shipped dual-field registration must be accepted by the list (rc.6) runtime',
+    'shipped registration must be accepted by the list runtime',
   )
   const [entry] = core.entriesOfSlot('test.slot')
   assert.equal(entry.options.id, CARD.id, 'list cell identity must come from options.id')
   assert.equal(entry.options.order, CARD.order, 'list display order must be preserved')
-  assert.equal(entry.options.key, CARD.key, 'options.key must be stored alongside options.id')
-}
-
-// --- 0.1.1-rc.x contract: keyed slot, registration requires options.key ---
-{
-  const core = coreWith('keyed')
-
-  // The mirror failure: an id-only registration on a keyed slot throws
-  // (`keyed slot "…" requires options.key`) — why a naive key→id revert
-  // would just move the crash to the newer runtime.
-  assert.throws(
-    () => core.register({ name: 'test.slot', id: CARD.id, order: CARD.order }, () => {}),
-    /keyed slot "test\.slot" requires options\.key/,
-    'id-only registration must throw on the keyed (0.1.1-rc.x) runtime',
-  )
-
-  // The same shipped shape registers cleanly; cell identity comes from key.
-  assert.doesNotThrow(
-    () => core.register({ name: 'test.slot', ...CARD }, () => {}),
-    'shipped dual-field registration must be accepted by the keyed (0.1.1-rc.x) runtime',
-  )
-  const [entry] = core.entriesOfSlot('test.slot')
-  assert.equal(entry.options.key, CARD.key, 'keyed cell identity must come from options.key')
-  assert.equal(entry.options.id, CARD.id, 'options.id must be stored alongside options.key')
 }
 
 const slotsVersion = requireFrom('@deepseek-ai/dsh-client-ui-slots/package.json').version
 console.log(
-  `slot-contract-compat: ok — shipped bundle registers by key+id+order; accepted by both list (rc.6) and keyed (0.1.1-rc.x) runtimes (SlotCore ${slotsVersion})`,
+  `slot-contract-compat: ok — shipped bundle registers by id+order into plugins.item; accepted by the list runtime (SlotCore ${slotsVersion})`,
 )

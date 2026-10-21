@@ -22,6 +22,9 @@ on:
 
 permissions:
   contents: write
+  # npm Trusted Publishing: the publish step exchanges this workflow's OIDC
+  # identity for a short-lived npm token, so no npm secret is needed.
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -111,6 +114,37 @@ jobs:
           pnpm build
           pnpm pack --pack-destination .
 
+      # Publish to npm through Trusted Publishing (OIDC + provenance), the same
+      # way dsh-plugin-tts does: no npm secret lives in this repository, the
+      # npm registry vouches for the workflow instead. The npm side must be set
+      # up once by a package admin:
+      #   npmjs.com → package → Settings → Trusted Publisher
+      #     organization/user: 1624318455
+      #     repository:        dsh-plugin-tavily
+      #     workflow filename: release.yml
+      #     environment:       (leave empty)
+      # Provenance needs npm >= 11.5.1, so the runner uses Node 24 and
+      # upgrades npm explicitly (Node 22 ships npm 10, which cannot do OIDC).
+      - name: Set up Node for npm publishing
+        if: steps.released.outputs.exists == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm for OIDC support
+        if: steps.released.outputs.exists == 'false'
+        run: npm install -g npm@latest && npm --version
+
+      - name: Publish to npm
+        if: steps.released.outputs.exists == 'false'
+        run: |
+          # Trusted Publishing: the npm registry exchanges this workflow's OIDC
+          # identity for a publish token, so no npm secret is read here. The
+          # tag is created later in this job; publish under the version
+          # package.json declares.
+          npm publish --provenance --access public
+
       - name: Generate release notes
         if: steps.released.outputs.exists == 'false'
         env:
@@ -131,6 +165,10 @@ jobs:
           gh api --method POST "repos/${{ github.repository }}/git/refs" \
             -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
           # Publish the release at that tag, then attach the packed tarball.
+          # The pack filename is derived from the package name and version, so
+          # a rename or a version bump never desyncs this path.
+          TARBALL=$(ls ./*.tgz | head -1)
+          [ -n "$TARBALL" ] || { echo "::error::no packed tarball found"; exit 1; }
           gh release create "$TAG" --title "$TAG" --notes-file /tmp/notes.md
-          gh release upload "$TAG" "dsh-external-dsh-plugin-tavily-${{ steps.version.outputs.version }}.tgz"
+          gh release upload "$TAG" "$TARBALL"
           echo "released $TAG"

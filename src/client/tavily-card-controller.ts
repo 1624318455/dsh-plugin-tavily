@@ -23,11 +23,10 @@
  * covers everything the card shows.
  */
 
-import type { IApiClient } from '@deepseek-ai/dsh-client-connection/client'
-import type { SettingsScope, SettingsScopeSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import {
   booleanField, CardForm, listField, numberField, selectField, textField, valueSelectField,
-  type CardActions, type CardFieldState, type CardShell,
+  type CardActions, type CardFieldState, type CardScope, type CardScopeSnapshot, type CardShell,
 } from './card-form.ts'
 
 /**
@@ -230,6 +229,34 @@ interface CredentialState {
   writable: boolean
 }
 
+/**
+ * The slice of the browser plugin context this controller needs.
+ *
+ * Kept structural and minimal: the card reaches credentials through
+ * `ctx.remote.credentials` (the generated Host Remote namespace), so it needs
+ * no value import from a client package and stays inside the bundle purity gate.
+ */
+export interface TavilyCardContext {
+  readonly remote: {
+    readonly credentials: {
+      /**
+       * Report whether each reference resolves to a value, and whether the
+       * Host would accept a write for it.
+       * @param refs - credential references to describe.
+       * @returns one view per reference, keyed by reference.
+       */
+      describe(refs: readonly string[]): Promise<Record<string, { configured?: boolean; writable?: boolean } | undefined>>
+      /**
+       * Store a credential literal under a reference.
+       * @param ref - the reference to write.
+       * @param value - the literal secret.
+       * @returns settlement once the Host holds it.
+       */
+      set(ref: string, value: string): Promise<unknown>
+    }
+  }
+}
+
 /** What the Tavily card renders. */
 export interface TavilyCardState extends CardShell {
   /** API endpoint base. */
@@ -320,6 +347,7 @@ export interface TavilyCardFace extends CardActions {
 export class TavilyCardController {
   private readonly form: CardForm<TavilySettings>
   private readonly store: SnapshotStore<TavilyCardState>
+  private readonly unsubscribe: () => void
   private credential: CredentialState = { ref: '', configured: false, writable: true }
   private apiTest: TavilyApiTestState = { status: 'idle', detail: '' }
   private usage: TavilyUsageState = { status: 'idle', detail: '' }
@@ -332,8 +360,8 @@ export class TavilyCardController {
    * @param api - wire face used for the credential the section references.
    */
   constructor(
-    private readonly scope: SettingsScope<TavilySettings>,
-    private readonly api: Pick<IApiClient, 'credentials'>,
+    private readonly scope: CardScope<TavilySettings>,
+    private readonly ctx: TavilyCardContext,
   ) {
     this.form = new CardForm(
       scope,
@@ -368,8 +396,13 @@ export class TavilyCardController {
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
     this.store = this.form.bind(() => this.projection())
-    scope.subscribe(() => { void this.readCredential() })
+    this.unsubscribe = scope.subscribe(() => { void this.readCredential() })
     void this.readCredential().then(() => { void this.refreshStatus() })
+  }
+
+  /** Release the controller's configuration subscription. */
+  dispose(): void {
+    this.unsubscribe()
   }
 
   private projection(): TavilyCardState {
@@ -440,16 +473,18 @@ export class TavilyCardController {
       this.credential = { ref, configured: false, writable: true }
       this.store.set(this.projection())
     }
-    let response: Awaited<ReturnType<IApiClient['credentials']['describe']>>
+    let view: { configured?: boolean; writable?: boolean } | undefined
     try {
-      response = await this.api.credentials.describe({ refs: [ref] })
+      // Credentials are addressed by reference on the wire; the Host answers a
+      // map keyed by the refs that were asked about.
+      const described = await this.ctx.remote.credentials.describe([ref])
+      view = described[ref]
     } catch (_credentialReadFailure) {
       // The card stays usable without this: the key control simply reports the
       // last state it knew, and a write still reaches the Host.
       return
     }
-    if (!response.result.ok || ref !== refOf(this.scope.getSnapshot())) return
-    const view = response.result.value.credentials[ref]
+    if (ref !== refOf(this.scope.getSnapshot())) return
     const next: CredentialState = {
       ref,
       configured: view?.configured ?? false,
@@ -701,7 +736,7 @@ export class TavilyCardController {
    */
   private async writeKey(value: string): Promise<boolean> {
     try {
-      await this.api.credentials.set({ ref: refOf(this.scope.getSnapshot()), value })
+      await this.ctx.remote.credentials.set(refOf(this.scope.getSnapshot()), value)
     } catch (_credentialWriteFailure) {
       // Refusals surface through the re-read below: the Host is the only
       // authority on whether the key now exists.
@@ -716,7 +751,7 @@ export class TavilyCardController {
  * @param snapshot - the current scope snapshot.
  * @returns the reference to address.
  */
-function refOf(snapshot: SettingsScopeSnapshot<TavilySettings>): string {
+function refOf(snapshot: CardScopeSnapshot<TavilySettings>): string {
   const declared = snapshot.value?.apiKeyEnv
   return declared !== undefined && declared.length > 0 ? declared : DEFAULT_API_KEY_REF
 }

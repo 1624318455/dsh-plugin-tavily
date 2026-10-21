@@ -21,10 +21,93 @@
  * Self-contained: this plugin's client bundle cannot import the settings
  * shell's internals (client bundle purity gate), so the staged-form model the
  * product's cards share is mirrored here at the size this card needs.
+ *
+ * Writes go through the dsh 0.2.x scope contract — `mutate(ops, revision)`,
+ * an ordered, revision-fenced batch of path edits — rather than the removed
+ * per-field `set`/`unset` pair.
  */
 
-import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
+
+/**
+ * Create the observable snapshot store a slot renderer reads through.
+ *
+ * Implemented here rather than imported from `@deepseek-ai/dsh-client-store`:
+ * that package ships no browser module declaration, so bundling it would inline
+ * zustand and immer into this plugin's client bundle. The renderer only needs
+ * the `ObservableSnapshot` face — `getSnapshot` plus `subscribe` — so a plain
+ * subject satisfies it.
+ * @param init - initial state.
+ * @returns a writable snapshot store.
+ */
+function createSnapshotStore<T>(init: T): SnapshotStore<T> {
+  let state = init
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => state,
+    subscribe: (fn: () => void) => {
+      listeners.add(fn)
+      return () => { listeners.delete(fn) }
+    },
+    set: (next: T) => {
+      if (Object.is(next, state)) return
+      state = next
+      for (const listener of [...listeners]) listener()
+    },
+    update: (mutator: (draft: T) => void) => {
+      // Structured clone keeps the mutator's writes off the published object,
+      // so a subscriber comparing by reference still sees a change.
+      const draft = structuredClone(state)
+      mutator(draft)
+      state = draft
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+/**
+ * The per-namespace form the client's `configForms` service serves. Mirrors the
+ * `SettingsFormScope` contract from `@deepseek-ai/dsh-client-ui-primitives`
+ * (spelled out here only so this file keeps its single runtime dependency).
+ */
+export interface CardScopeSnapshot<T> {
+  /** `ready` while the Host serves the entry to this client. */
+  status: 'loading' | 'ready' | 'unavailable'
+  /** Last accepted schema-resolved section. */
+  value: T | undefined
+  /** Composition layer the value resolves over. */
+  base: unknown
+  /** Raw user layer as stored; a field's PRESENCE here marks it overridden. */
+  user: unknown
+  /** Whether the Host document accepts writes. */
+  writable: boolean
+  /** Revision the snapshot was read at. */
+  revision: number | undefined
+}
+
+/** One path edit a save sends. */
+export type CardPathOp =
+  | { op: 'set'; path: readonly string[]; value: unknown }
+  | { op: 'unset'; path: readonly string[] }
+
+/** The entry form this card stages over. */
+export interface CardScope<T> {
+  /** @returns the current sync snapshot. */
+  getSnapshot(): CardScopeSnapshot<T>
+  /**
+   * Observe snapshot replacements.
+   * @param listener - invoked after each snapshot change.
+   * @returns the disposer removing this listener.
+   */
+  subscribe(listener: () => void): () => void
+  /**
+   * Apply ordered field edits in one revision-fenced write.
+   * @param ops - the edits, in staging order.
+   * @param expectedRevision - the revision the drafts were staged against.
+   * @returns true for Host acceptance, false for refusal.
+   */
+  mutate(ops: readonly CardPathOp[], expectedRevision?: number): Promise<boolean>
+}
 
 /** The write one field's staged text performs when the card is saved. */
 export type FieldWrite =
@@ -296,7 +379,7 @@ export class CardForm<T> {
    * @param secrets - the card's write-only controls, written outside the section.
    */
   constructor(
-    private readonly scope: SettingsScope<T>,
+    private readonly scope: CardScope<T>,
     specs: CardFieldSpec[],
     secrets: CardSecretSpec[] = [],
   ) {
@@ -454,17 +537,41 @@ export class CardForm<T> {
     return plan
   }
 
+  /**
+   * Clear one field (and its legacy aliases) from the user layer, so it
+   * re-inherits the composition layer.
+   *
+   * One `mutate` call carries every alias unset together, fenced with the
+   * revision the drafts were staged against: a save that raced another writer
+   * is refused rather than silently clobbering it.
+   * @param field - field name whose aliases are cleared.
+   * @returns whether no alias remains in the user layer afterwards.
+   */
   private async clear(field: string): Promise<boolean> {
+    const snapshot = this.snapshotOf()
     const user = this.userLayer() ?? {}
-    for (const name of this.allNames(field)) {
-      if (Object.hasOwn(user, name)) await this.scope.unset(name)
-    }
+    const ops: CardPathOp[] = this.allNames(field)
+      .filter(name => Object.hasOwn(user, name))
+      .map(name => ({ op: 'unset' as const, path: [name] }))
+    if (ops.length === 0) return true
+    const accepted = await this.scope.mutate(ops, snapshot.revision)
+    if (!accepted) return false
     const remaining = this.userLayer() ?? {}
     return !this.allNames(field).some(name => Object.hasOwn(remaining, name))
   }
 
+  /**
+   * Store one field in the user layer.
+   * @param field - field name to write.
+   * @param value - value to store.
+   * @returns whether the Host holds the staged value afterwards.
+   */
   private async store(field: string, value: unknown): Promise<boolean> {
-    await this.scope.set(field, value)
+    const accepted = await this.scope.mutate(
+      [{ op: 'set', path: [field], value }],
+      this.snapshotOf().revision,
+    )
+    if (!accepted) return false
     return this.userLayer()?.[field] === value
   }
 
@@ -482,7 +589,7 @@ export class CardForm<T> {
     return spec
   }
 
-  private snapshotOf(): SettingsScopeSnapshot<T> {
+  private snapshotOf(): CardScopeSnapshot<T> {
     return this.scope.getSnapshot()
   }
 

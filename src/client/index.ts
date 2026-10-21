@@ -1,115 +1,115 @@
 /**
- * Tavily plugin card, browser half — one card registered into the settings
- * shell's `settings.plugin.item` slot, bound to the `web-search-tavily`
- * namespace the Host plugin registers through the settings seam.
+ * Tavily plugin card, browser half — one card registered into the Plugins
+ * page's `plugins.item` slot, bound to the `web-search-tavily` config namespace
+ * that the Host plugin's profile entry declares.
  *
  * The key is the one control that does not live in the section: the card
  * learns only whether one is configured and writes it through the credentials
  * domain, addressed by the reference the section names.
+ *
+ * dsh 0.2.x notes (all of these changed from the 0.1.x API this plugin was
+ * first written against):
+ *   - the settings scope service is `ctx.configForms`, not `settingsScope`;
+ *   - a plugin's form is addressed by its profile entry id;
+ *   - the Plugins page slot is `plugins.item`, not `settings.plugin.item`;
+ *   - a card's registration follows whether the Host serves its namespace via
+ *     `configForms.whileServed`, so a deployment without the plugin shows no
+ *     trace of the card;
+ *   - credential invalidations arrive as `credentials/reference-updated`.
  */
 
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-// Type-only: pulls the locale plugin's Context merge (ctx.locale).
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: pulls the locale plugin's Context merge (ctx.locale) and the
+// slots service's Context merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-// Type-only: the settings shell's ctx.settingsScope Context merge. Cross-plugin
-// collaboration goes through the service, never a value import (client bundle
-// purity gate). The `settings.plugin.item` contract is pinned in
-// ./slot-contract.ts (the published rc.6 settings-plugins types describe the
-// superseded list shape; the runtime kind is version-dependent — see there).
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
+// Type-only: the Plugins page's `plugins.item` slot declaration and the
+// `ctx.configForms` Context merge. Cross-plugin collaboration goes through the
+// service, never a value import (client bundle purity gate).
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: the ctx.remote Context merge and the forwarded-event key face.
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import './slot-contract.ts'
 import { TavilyCard } from './TavilyCard.tsx'
-
-import { TAVILY_NS, TavilyCardController } from './tavily-card-controller.ts'
+import {
+  TAVILY_NS,
+  TavilyCardController,
+  type TavilyCardContext,
+} from './tavily-card-controller.ts'
 import { en, zh } from './locales.ts'
 import { injectCardStyles } from './styles.ts'
 
 /** Dictionary namespace owned by this plugin's card. */
 const NS = 'settings.plugins.tavily'
 
-/** Card cell identity the `settings.plugin.item` runtime reads: `id` on list slots, `key` on keyed slots. */
-const CARD_KEY = 'web-search-tavily'
+/** Card identity inside the Plugins page's official-plugin list. */
+const CARD_ID = 'web-search-tavily'
 
-/** List-side display order: one card past the built-in web-search card (20). */
-const CARD_ORDER = 21
+/** Display order: one card past the built-in web-search card. */
+const CARD_ORDER = 41
 
 /** Required services (cordis fiber inject). */
-export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope']
+export const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'configForms']
 
 /**
- * Mount the Tavily plugin card into the plugin configuration section.
+ * The slots service as this plugin uses it.
+ *
+ * Spelled structurally rather than imported: the `ctx.slots` Context merge is
+ * contributed by the client runtime shell (`dsh-client-ui-renderer`), which a
+ * third-party bundle does not depend on — the shipped reference cards are
+ * compiled against it, not typechecked through it.
+ */
+interface SlotsService {
+  /**
+   * Declare that this plugin contributes to a slot, then register an entry.
+   * @param name - the slot to gate on.
+   * @param register - registers the entry once the slot exists; returns its disposer.
+   * @returns the disposer ending the gate and any live registration.
+   */
+  inject(name: string, register: () => () => void): () => void
+  /**
+   * Register one entry into a slot.
+   * @param options - slot name plus the entry's identity and inject face.
+   * @param component - the component the slot renders.
+   * @returns the disposer removing this entry.
+   */
+  register(options: Record<string, unknown>, component: unknown): () => void
+}
+
+/**
+ * Mount the Tavily plugin card into the Plugins page.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
-  // Service resolution (fiber inject waiting): the client runner creates
-  // the entry as ctx.plugin({ inject, apply }), so apply only runs after
-  // the declared services are available. Prefer the new-runtime direct
-  // property with a ctx.get fallback for older runtimes, and fail loud —
-  // a silent no-op would blank the whole card (same class as
-  // dsh-plugin-tts@a00b357, where slots was unavailable at apply time).
-  const ctxAny = ctx as unknown as Record<string, any>
-  const viaGet = (serviceName: string): any => {
-    if (typeof ctxAny.get !== 'function') return undefined
-    try {
-      return ctxAny.get(serviceName)
-    } catch {
-      return undefined
-    }
-  }
-  const slots = ctxAny.slots ?? viaGet('slots')
-  if (!slots) throw new Error('[dsh-plugin-tavily] slots service unavailable')
-  const locale = ctxAny.locale ?? viaGet('locale')
-  if (!locale) throw new Error('[dsh-plugin-tavily] locale service unavailable')
-  const connection = ctxAny.connection ?? viaGet('connection')
-  if (!connection) throw new Error('[dsh-plugin-tavily] connection service unavailable')
-  const remote = ctxAny.remote ?? viaGet('remote')
-  if (!remote) throw new Error('[dsh-plugin-tavily] remote service unavailable')
-  const settingsScope = ctxAny.settingsScope ?? viaGet('settingsScope')
-  if (!settingsScope) throw new Error('[dsh-plugin-tavily] settingsScope service unavailable')
-
-  const { api } = connection as ConnectionHandle
-  ctx.effect(() => locale.register(NS, { zh, en }), 'web-search-tavily: card dictionaries')
+  const t = ctx.locale.bind(NS)
+  const slots = (ctx as unknown as { slots: SlotsService }).slots
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'web-search-tavily: card dictionaries')
   ctx.effect(() => injectCardStyles(), 'web-search-tavily: card styles')
 
-  const controller = new TavilyCardController(settingsScope.bind({ namespace: TAVILY_NS }), api)
+  const controller = new TavilyCardController(
+    ctx.configForms.get(TAVILY_NS),
+    ctx as unknown as TavilyCardContext,
+  )
+  ctx.effect(() => () => { controller.dispose() }, 'web-search-tavily: form subscription')
 
-  // The credential a card reports is not part of any settings section, so its
+  // The credential a card reports is not part of any settings section, so the
   // scope publishes nothing when one is written. This is the only signal that
   // a key written on another surface reached the Host.
   ctx.effect(
-    () => remote.$on('credentials/updated', (ref: string) => { controller.refreshCredential(ref) }),
+    () => ctx.remote.$on('credentials/reference-updated', (ref: string) => { controller.refreshCredential(ref) }),
     'web-search-tavily: credential invalidations',
   )
 
-  // One registration, both slot contracts. `settings.plugin.item` shipped as a
-  // LIST slot in the published rc.6 runtime (register requires `id`; built-ins
-  // use id: 'bash' / 'agent-loop' / 'web-search'); later runs (0.1.1-rc.x, what
-  // `>=0.1.0-rc.6` resolves to on a fresh install) declare it KEYED (register
-  // requires `key`; built-ins use key: 'shell' / 'agent-loop' /
-  // 'web-search-deepseek'). Both SlotCore.register generations validate only
-  // their own field, never cross-check the other, and store whichever of
-  // `key`/`id` are present — so supplying BOTH (plus the list-side `order`) is
-  // the single registration every released runtime accepts.
-  // `as const` keeps `name` narrowed to the slot key so the register overload
-  // resolves; the extra `id`/`order` fields ride along structurally because
-  // this named const is not a fresh literal, so the typechecker admits them
-  // (the local keyed declaration in slot-contract.ts types the `key` half).
-  const cardOptions = {
-    name: 'settings.plugin.item',
-    key: CARD_KEY,
-    id: CARD_KEY,
-    order: CARD_ORDER,
-    locale: NS,
-    inject: () => controller.inject(),
-  } as const
+  // `whileServed` keeps the card registered only while the Host actually serves
+  // the `web-search-tavily` config namespace, so uninstalling or disabling the
+  // Host half removes the card instead of leaving a dead tab behind.
   ctx.effect(
-    () =>
-      slots.inject('settings.plugin.item', function* () {
-        yield slots.register(cardOptions, TavilyCard)
-      }),
+    () => ctx.configForms.whileServed([TAVILY_NS], () => slots.inject('plugins.item', () => slots.register({
+      name: 'plugins.item',
+      id: CARD_ID,
+      order: CARD_ORDER,
+      label: () => t('tavilyTitle'),
+      locale: NS,
+      inject: () => controller.inject(),
+    }, TavilyCard))),
     'web-search-tavily: settings card',
   )
 }
