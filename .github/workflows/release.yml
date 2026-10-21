@@ -138,11 +138,23 @@ jobs:
 
       - name: Publish to npm
         if: steps.released.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # Trusted Publishing: the npm registry exchanges this workflow's OIDC
           # identity for a publish token, so no npm secret is read here. The
           # tag is created later in this job; publish under the version
           # package.json declares.
+          #
+          # A version already on the registry is not an error: the first
+          # release of a package has to be published by hand (npm only lets
+          # OIDC publish INTO an existing package), and a re-run of this
+          # workflow must not stop the tag and the GitHub Release. Skip it
+          # and let the release continue.
+          if npm view "@memef1f1y/dsh-plugin-tavily@$VERSION" version > /dev/null 2>&1; then
+            echo "::notice::@memef1f1y/dsh-plugin-tavily@$VERSION is already published — skipping the npm publish"
+            exit 0
+          fi
           npm publish --provenance --access public
 
       - name: Generate release notes
